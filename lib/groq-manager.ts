@@ -5,6 +5,9 @@ import type { KeyState } from "./types";
 
 export const GROQ_MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
 const MAX_RETRIES = 3;
+// Cap on reply length. Generous (token budget is ample with multiple keys); the
+// prompt keeps replies concise by default, this just prevents pathological runaways.
+const MAX_OUTPUT_TOKENS = Number(process.env.GROQ_MAX_OUTPUT_TOKENS ?? 2048);
 
 interface KeyEntry {
   apiKey: string;
@@ -239,6 +242,8 @@ class GroqKeyManager {
   async generate(
     messages: { role: "user" | "assistant"; content: string }[],
     systemPrompt?: string,
+    model: string = GROQ_MODEL,
+    temperature?: number,
   ): Promise<GenerateResult> {
     if (this.keys.length === 0) {
       throw new Error("No Groq API keys configured (set GROQ_API_KEY_1, ...).");
@@ -257,16 +262,18 @@ class GroqKeyManager {
         const fresh = this.keys.find((e) => !triedIndexes.has(e.state.index));
         if (fresh) {
           // selectKey would re-pick the same one; force the untried key instead.
-          return this.runOnce(fresh, messages, systemPrompt, triedIndexes).catch((err) => {
-            lastError = err;
-            throw err;
-          });
+          return this.runOnce(fresh, messages, systemPrompt, model, temperature, triedIndexes).catch(
+            (err) => {
+              lastError = err;
+              throw err;
+            },
+          );
         }
       }
       triedIndexes.add(entry.state.index);
 
       try {
-        return await this.runOnce(entry, messages, systemPrompt, triedIndexes);
+        return await this.runOnce(entry, messages, systemPrompt, model, temperature, triedIndexes);
       } catch (err) {
         lastError = err;
         if (err instanceof APICallError && err.statusCode === 429) {
@@ -287,6 +294,8 @@ class GroqKeyManager {
     entry: KeyEntry,
     messages: { role: "user" | "assistant"; content: string }[],
     systemPrompt: string | undefined,
+    model: string,
+    temperature: number | undefined,
     tried: Set<number>,
   ): Promise<GenerateResult> {
     tried.add(entry.state.index);
@@ -294,9 +303,11 @@ class GroqKeyManager {
 
     try {
       const result = await generateText({
-        model: groq(GROQ_MODEL),
+        model: groq(model),
         system: systemPrompt,
         messages,
+        maxOutputTokens: MAX_OUTPUT_TOKENS,
+        temperature,
       });
 
       const headers = result.response?.headers ?? {};
