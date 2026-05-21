@@ -5,6 +5,13 @@ import { generateAIResponse } from "@/lib/groq-client";
 import { maskPhone } from "@/lib/format";
 import { logger } from "@/lib/logger";
 import {
+  extractAndStoreMemories,
+  getSummary,
+  searchMemories,
+  updateSummary,
+} from "@/lib/memory";
+import { buildContextPrompt } from "@/lib/system-prompt";
+import {
   claimMessage,
   getChatHistory,
   saveChatMessage,
@@ -16,6 +23,9 @@ export const runtime = "nodejs"; // crypto + AI SDK need the Node runtime
 export const maxDuration = 60;
 
 const log = logger("whatsapp");
+
+const RECENT_WINDOW = 20; // recent messages sent verbatim (ample token budget)
+const SUMMARY_EVERY = 12; // refresh the rolling summary every N messages
 
 // ── GET: Meta webhook verification ──────────────────────────────────────────
 export async function GET(req: NextRequest): Promise<Response> {
@@ -102,39 +112,72 @@ async function processMessage(phone: string, messageText: string): Promise<void>
   const userMessage: Message = { role: "user", content: messageText, timestamp: startedAt };
   await saveChatMessage(phone, userMessage);
 
-  const history = await getChatHistory(phone);
-  const llmMessages: { role: Role; content: string }[] = history.map((m) => ({
+  // Retrieve long-term memory + rolling summary (Vector + Redis, no Groq tokens).
+  const [memories, summary, history] = await Promise.all([
+    searchMemories(phone, messageText),
+    getSummary(phone),
+    getChatHistory(phone),
+  ]);
+
+  // Only the recent window goes verbatim; older context comes via summary/memories.
+  const recent = history.slice(-RECENT_WINDOW);
+  const llmMessages: { role: Role; content: string }[] = recent.map((m) => ({
     role: m.role,
     content: m.content,
   }));
+  const systemPrompt = buildContextPrompt(memories, summary);
 
+  const assistantMessage: Message = { role: "assistant", content: "", timestamp: Date.now() };
   let reply: string;
-  let keyUsed: string;
   try {
-    const result = await generateAIResponse(llmMessages);
+    const result = await generateAIResponse(llmMessages, systemPrompt);
     reply = result.text.trim() || "Maaf, aku tidak punya jawaban untuk itu.";
-    keyUsed = result.keyUsed;
+    assistantMessage.keyUsed = result.keyUsed;
     void log.info("ai.ok", {
       phone: masked,
-      keyUsed,
+      keyUsed: result.keyUsed,
       tokens: result.tokensUsed,
+      memories: memories.length,
+      hasSummary: Boolean(summary),
       ms: Date.now() - startedAt,
     });
   } catch (err) {
     void log.error("ai.failed", { phone: masked, err: err instanceof Error ? err : String(err) });
     reply = "Maaf, sedang ada gangguan. Coba lagi sebentar lagi ya.";
-    keyUsed = "none";
+    assistantMessage.keyUsed = "none";
   }
 
-  await saveChatMessage(phone, {
-    role: "assistant",
-    content: reply,
-    timestamp: Date.now(),
-    keyUsed,
-  });
+  assistantMessage.content = reply;
+  assistantMessage.timestamp = Date.now();
+  await saveChatMessage(phone, assistantMessage);
 
+  // Reply to the user first; memory upkeep runs afterwards (still in background).
   await sendWhatsAppReply(phone, reply);
   void log.info("process.done", { phone: masked, ms: Date.now() - startedAt });
+
+  await updateMemory(phone, userMessage, assistantMessage, history.length + 1);
+}
+
+// Extract durable facts, and periodically refresh the rolling summary.
+async function updateMemory(
+  phone: string,
+  userMessage: Message,
+  assistantMessage: Message,
+  totalMessages: number,
+): Promise<void> {
+  try {
+    await extractAndStoreMemories(phone, [userMessage, assistantMessage]);
+    // Refresh summary every SUMMARY_EVERY messages once the conversation is long enough.
+    if (totalMessages > RECENT_WINDOW && totalMessages % SUMMARY_EVERY === 0) {
+      const [history, prev] = await Promise.all([getChatHistory(phone), getSummary(phone)]);
+      await updateSummary(phone, history.slice(-SUMMARY_EVERY), prev);
+    }
+  } catch (err) {
+    void log.error("memory.upkeep.failed", {
+      phone: maskPhone(phone),
+      err: err instanceof Error ? err : String(err),
+    });
+  }
 }
 
 async function sendWhatsAppReply(phone: string, body: string): Promise<void> {
