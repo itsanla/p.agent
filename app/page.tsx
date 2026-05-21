@@ -1,65 +1,77 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useCallback, useEffect, useState } from "react";
+import { CombinedStats } from "@/components/combined-stats";
+import { TokenCard } from "@/components/token-card";
+import type { StatsResponse } from "@/lib/types";
+
+const REFRESH_MS = 30_000;
+
+export default function DashboardPage() {
+  const [data, setData] = useState<StatsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/stats", { cache: "no-store" });
+      if (!res.ok) throw new Error(`Stats request failed (${res.status})`);
+      const json = (await res.json()) as StatsResponse;
+      setData(json);
+      setError(null);
+      setLastUpdated(new Date());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load stats");
+    }
+  }, []);
+
+  useEffect(() => {
+    // async fetch → setState resolves after await, not synchronously
+    /* eslint-disable-next-line react-hooks/set-state-in-effect */
+    void load();
+    const id = setInterval(() => void load(), REFRESH_MS);
+    return () => clearInterval(id);
+  }, [load]);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="mx-auto max-w-5xl px-5 py-8 sm:px-8">
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Token Usage</h1>
+          <p className="text-sm text-muted">Live Groq API key monitoring</p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div className="text-right text-xs text-muted">
+          {lastUpdated && <div>Last updated {lastUpdated.toLocaleTimeString()}</div>}
+          <div>Auto-refresh every 30s</div>
         </div>
-      </main>
+      </header>
+
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {error}
+        </div>
+      )}
+
+      {!data && !error && <p className="text-muted">Loading…</p>}
+
+      {data && (
+        <div className="space-y-6">
+          <CombinedStats c={data.combined} />
+
+          {data.keys.length === 0 ? (
+            <div className="rounded-xl border border-border bg-surface px-5 py-8 text-center text-muted">
+              No Groq API keys detected. Set <code className="font-mono">GROQ_API_KEY_1</code> (and
+              more) in your environment.
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              {data.keys.map((k) => (
+                <TokenCard key={k.index} k={k} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
