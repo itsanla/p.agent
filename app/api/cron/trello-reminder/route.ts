@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 import { logger } from "@/lib/logger";
+import { notifyOwner } from "@/lib/notify";
 import { getRedis } from "@/lib/redis";
 import { getDueSoonCards, isTrelloConfigured, type DueCard } from "@/lib/trello";
-import { sendWhatsAppMessage } from "@/lib/whatsapp";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -42,11 +42,13 @@ export async function GET(req: NextRequest): Promise<Response> {
       if (await claimReminder(card)) fresh.push(card);
     }
 
+    let channel: string | null = null;
     if (fresh.length > 0) {
-      await sendWhatsAppMessage(owner, formatReminder(fresh));
+      // Router picks WhatsApp (within 24h window) or Slack (older) — never both.
+      ({ channel } = await notifyOwner(owner, formatReminder(fresh)));
     }
-    void log.info("trello-reminder.run", { dueSoon: due.length, notified: fresh.length });
-    return Response.json({ ok: true, dueSoon: due.length, notified: fresh.length });
+    void log.info("trello-reminder.run", { dueSoon: due.length, notified: fresh.length, channel });
+    return Response.json({ ok: true, dueSoon: due.length, notified: fresh.length, channel });
   } catch (err) {
     void log.error("trello-reminder.failed", { err: err instanceof Error ? err : String(err) });
     return Response.json({ ok: false, error: "reminder failed" }, { status: 500 });

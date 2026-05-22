@@ -4,6 +4,7 @@ import type { ChatMetadata, Message } from "./types";
 // Redis key structure:
 //   chat:history:{phone}     → list of message JSON strings (max 50, newest pushed left)
 //   chat:metadata:{phone}    → hash { lastActive, totalMessages, name, lastMessage }
+//   chat:lastInbound:{phone} → ms timestamp of the latest INBOUND (user) message
 //   chat:index               → set of all phone numbers with history
 //   processed:msg:{id}       → dedup marker (24h TTL)
 //   groq:stats:{index}:*     → token usage counters (see groq-manager)
@@ -30,7 +31,32 @@ export function getRedis(): Redis {
 
 const historyKey = (phone: string) => `chat:history:${phone}`;
 const metadataKey = (phone: string) => `chat:metadata:${phone}`;
+const lastInboundKey = (phone: string) => `chat:lastInbound:${phone}`;
 const INDEX_KEY = "chat:index";
+
+/**
+ * Record the timestamp (ms) of the latest INBOUND (user) message. This — not the
+ * metadata `lastActive`, which also moves on our own replies — is what defines
+ * WhatsApp's 24h customer-service window.
+ */
+export async function setLastInbound(phone: string, ts: number): Promise<void> {
+  try {
+    await getRedis().set(lastInboundKey(phone), ts);
+  } catch (err) {
+    console.error(`[redis] setLastInbound failed for ${phone}:`, err);
+  }
+}
+
+/** Timestamp (ms) of the latest inbound user message, or null if unknown. */
+export async function getLastInbound(phone: string): Promise<number | null> {
+  try {
+    const v = await getRedis().get<number>(lastInboundKey(phone));
+    return v != null ? Number(v) : null;
+  } catch (err) {
+    console.error(`[redis] getLastInbound failed for ${phone}:`, err);
+    return null;
+  }
+}
 
 /** Return chat history in chronological order (oldest first). */
 export async function getChatHistory(phone: string): Promise<Message[]> {

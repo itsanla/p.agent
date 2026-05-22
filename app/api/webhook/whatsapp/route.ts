@@ -16,6 +16,7 @@ import {
   getChatHistory,
   saveChatMessage,
   setChatName,
+  setLastInbound,
 } from "@/lib/redis";
 import {
   buildTrelloTools,
@@ -120,6 +121,8 @@ async function processMessage(phone: string, messageText: string): Promise<void>
 
   const userMessage: Message = { role: "user", content: messageText, timestamp: startedAt };
   await saveChatMessage(phone, userMessage);
+  // Record the inbound time so proactive notifications can pick WhatsApp vs Slack.
+  await setLastInbound(phone, startedAt);
 
   // Retrieve long-term memory + rolling summary (Vector + Redis, no Groq tokens).
   const [memories, summary, history] = await Promise.all([
