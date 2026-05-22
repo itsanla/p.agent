@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/trello-reminder",
+      "schedule": "0 * * * *"
+    }
+  ]
+}
