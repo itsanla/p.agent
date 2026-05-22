@@ -11,10 +11,13 @@ export default function DashboardPage() {
   const [data, setData] = useState<StatsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [probing, setProbing] = useState(false);
 
-  const load = useCallback(async () => {
+  // probe=true pings each key so the live per-min/per-day limits are refreshed.
+  const load = useCallback(async (probe = false) => {
+    if (probe) setProbing(true);
     try {
-      const res = await fetch("/api/stats", { cache: "no-store" });
+      const res = await fetch(`/api/stats${probe ? "?probe=1" : ""}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`Stats request failed (${res.status})`);
       const json = (await res.json()) as StatsResponse;
       setData(json);
@@ -22,6 +25,8 @@ export default function DashboardPage() {
       setLastUpdated(new Date());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load stats");
+    } finally {
+      if (probe) setProbing(false);
     }
   }, []);
 
@@ -40,9 +45,18 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Token Usage</h1>
           <p className="text-sm text-muted">Live Groq API key monitoring</p>
         </div>
-        <div className="text-right text-xs text-muted">
-          {lastUpdated && <div>Last updated {lastUpdated.toLocaleTimeString()}</div>}
-          <div>Auto-refresh every 30s</div>
+        <div className="flex items-center gap-3">
+          <div className="text-right text-xs text-muted">
+            {lastUpdated && <div>Diperbarui {lastUpdated.toLocaleTimeString()}</div>}
+            <div>Auto-refresh 30s</div>
+          </div>
+          <button
+            onClick={() => void load(true)}
+            disabled={probing}
+            className="rounded-lg border border-border bg-surface px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            {probing ? "Memuat…" : "↻ Reload"}
+          </button>
         </div>
       </header>
 
