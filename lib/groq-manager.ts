@@ -1,10 +1,20 @@
 import { createGroq } from "@ai-sdk/groq";
-import { generateText, APICallError } from "ai";
+import { generateText, APICallError, stepCountIs, type ToolSet } from "ai";
 import { getRedis } from "./redis";
 import type { KeyState } from "./types";
 
+export interface GenerateOptions {
+  systemPrompt?: string;
+  model?: string;
+  temperature?: number;
+  tools?: ToolSet;
+  maxSteps?: number; // tool-calling loop budget
+}
+
 export const GROQ_MODEL = process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile";
-const MAX_RETRIES = 3;
+// Try every configured key before giving up (each key may be a separate Groq
+// account/org with its own daily quota), capped to avoid pathological loops.
+const MAX_ATTEMPTS_CAP = 12;
 // Cap on reply length. Generous (token budget is ample with multiple keys); the
 // prompt keeps replies concise by default, this just prevents pathological runaways.
 const MAX_OUTPUT_TOKENS = Number(process.env.GROQ_MAX_OUTPUT_TOKENS ?? 2048);
@@ -104,6 +114,8 @@ class GroqKeyManager {
         totalTokensUsed: 0,
         totalRequestsMade: 0,
         lastUsed: null,
+        reportedTokensUsed: null,
+        reportedTokenLimit: null,
       },
     }));
   }
@@ -141,6 +153,32 @@ class GroqKeyManager {
     await this.hydrate();
     this.refreshLimits();
     return this.keys.map((e) => ({ ...e.state }));
+  }
+
+  /** Ping every key with a tiny request to refresh live rate-limit headers. */
+  async probeAll(): Promise<void> {
+    if (this.keys.length === 0) return;
+    await Promise.all(this.keys.map((e) => this.probeOne(e)));
+  }
+
+  private async probeOne(entry: KeyEntry): Promise<void> {
+    const groq = createGroq({ apiKey: entry.apiKey });
+    try {
+      const result = await generateText({
+        model: groq(GROQ_MODEL),
+        messages: [{ role: "user", content: "ping" }],
+        maxOutputTokens: 1,
+      });
+      this.applyHeaders(entry.state, (result.response?.headers ?? {}) as Record<string, string | undefined>);
+    } catch (err) {
+      // Even an error (e.g. 429) carries the rate-limit headers we want.
+      if (err instanceof APICallError) {
+        if (err.responseHeaders) {
+          this.applyHeaders(entry.state, err.responseHeaders as Record<string, string | undefined>);
+        }
+        if (err.statusCode === 429) this.handle429(entry.state, err.responseHeaders, err.message);
+      }
+    }
   }
 
   /** Clear stale rate-limit flags whose window has already passed. */
@@ -237,13 +275,11 @@ class GroqKeyManager {
 
   /**
    * Generate a completion, automatically failing over across keys on 429.
-   * Throws after MAX_RETRIES exhausted or when no keys are configured.
+   * Throws after every key has been tried, or when no keys are configured.
    */
   async generate(
     messages: { role: "user" | "assistant"; content: string }[],
-    systemPrompt?: string,
-    model: string = GROQ_MODEL,
-    temperature?: number,
+    opts: GenerateOptions = {},
   ): Promise<GenerateResult> {
     if (this.keys.length === 0) {
       throw new Error("No Groq API keys configured (set GROQ_API_KEY_1, ...).");
@@ -252,8 +288,9 @@ class GroqKeyManager {
 
     let lastError: unknown = null;
     const triedIndexes = new Set<number>();
+    const maxAttempts = Math.min(Math.max(this.keys.length, 1), MAX_ATTEMPTS_CAP);
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const entry = this.selectKey();
       if (!entry) break;
 
@@ -262,22 +299,20 @@ class GroqKeyManager {
         const fresh = this.keys.find((e) => !triedIndexes.has(e.state.index));
         if (fresh) {
           // selectKey would re-pick the same one; force the untried key instead.
-          return this.runOnce(fresh, messages, systemPrompt, model, temperature, triedIndexes).catch(
-            (err) => {
-              lastError = err;
-              throw err;
-            },
-          );
+          return this.runOnce(fresh, messages, opts, triedIndexes).catch((err) => {
+            lastError = err;
+            throw err;
+          });
         }
       }
       triedIndexes.add(entry.state.index);
 
       try {
-        return await this.runOnce(entry, messages, systemPrompt, model, temperature, triedIndexes);
+        return await this.runOnce(entry, messages, opts, triedIndexes);
       } catch (err) {
         lastError = err;
         if (err instanceof APICallError && err.statusCode === 429) {
-          this.handle429(entry.state, err.responseHeaders);
+          this.handle429(entry.state, err.responseHeaders, err.message);
           continue; // failover to next key
         }
         // Non-rate-limit error: retry once on a different key, then give up.
@@ -293,9 +328,7 @@ class GroqKeyManager {
   private async runOnce(
     entry: KeyEntry,
     messages: { role: "user" | "assistant"; content: string }[],
-    systemPrompt: string | undefined,
-    model: string,
-    temperature: number | undefined,
+    opts: GenerateOptions,
     tried: Set<number>,
   ): Promise<GenerateResult> {
     tried.add(entry.state.index);
@@ -303,17 +336,21 @@ class GroqKeyManager {
 
     try {
       const result = await generateText({
-        model: groq(model),
-        system: systemPrompt,
+        model: groq(opts.model ?? GROQ_MODEL),
+        system: opts.systemPrompt,
         messages,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
-        temperature,
+        temperature: opts.temperature,
+        ...(opts.tools
+          ? { tools: opts.tools, stopWhen: stepCountIs(opts.maxSteps ?? 6) }
+          : {}),
       });
 
       const headers = result.response?.headers ?? {};
       this.applyHeaders(entry.state, headers as Record<string, string | undefined>);
 
-      const tokensUsed = result.usage?.totalTokens ?? 0;
+      // totalUsage aggregates all steps in a tool-calling loop; fall back to usage.
+      const tokensUsed = result.totalUsage?.totalTokens ?? result.usage?.totalTokens ?? 0;
       await this.persistUsage(entry.state, tokensUsed);
 
       return {
@@ -329,12 +366,26 @@ class GroqKeyManager {
     }
   }
 
-  private handle429(state: KeyState, headers: Record<string, string> | undefined): void {
+  private handle429(
+    state: KeyState,
+    headers: Record<string, string> | undefined,
+    errorText?: string,
+  ): void {
     const retryAfter = headers?.["retry-after"] ?? headers?.["Retry-After"];
     const resetTokens = headers?.["x-ratelimit-reset-tokens"];
     let waitMs = 0;
     if (retryAfter) waitMs = parseGroqResetTime(retryAfter);
     if (waitMs === 0 && resetTokens) waitMs = parseGroqResetTime(resetTokens);
+
+    // Groq only reveals the real daily-token figures in the 429 message body.
+    if (errorText && /tokens per day|\bTPD\b/i.test(errorText)) {
+      const limit = errorText.match(/Limit\s+(\d+)/i);
+      const used = errorText.match(/Used\s+(\d+)/i);
+      if (limit) state.reportedTokenLimit = Number(limit[1]);
+      if (used) state.reportedTokensUsed = Number(used[1]);
+      const tryIn = errorText.match(/try again in ([0-9hms.]+)/i);
+      if (waitMs === 0 && tryIn) waitMs = parseGroqResetTime(tryIn[1]);
+    }
     if (waitMs === 0) waitMs = 60_000; // sensible default
 
     state.isLimited = true;
