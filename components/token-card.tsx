@@ -51,6 +51,11 @@ export function TokenCard({ k }: { k: KeyStatsResponse }) {
   const level = statusLevel(tokenPct, k.isLimited);
   const statusText = k.isLimited ? "Rate limited" : "Active";
 
+  // Daily token budget (TPD) — usually the real constraint. Color by usage.
+  const dailyUsedPct =
+    k.dailyTokenLimit > 0 ? Math.min(100, (k.dailyTokensUsed / k.dailyTokenLimit) * 100) : 0;
+  const dailyLevel: StatusLevel = dailyUsedPct >= 90 ? "red" : dailyUsedPct >= 70 ? "yellow" : "green";
+
   return (
     <div className="rounded-xl border border-border bg-surface">
       <div className="flex items-center justify-between border-b border-border px-5 py-3">
@@ -88,16 +93,24 @@ export function TokenCard({ k }: { k: KeyStatsResponse }) {
       </div>
 
       <div className="border-t border-border px-5 py-3">
-        <div className="text-xs uppercase tracking-wide text-muted">Total Used Today</div>
-        <div className="mt-1 flex items-center gap-4 text-sm">
+        <div className="mb-1 flex items-center justify-between text-xs uppercase tracking-wide text-muted">
           <span>
-            Tokens: <span className="font-semibold">{formatNumber(k.totalTokensUsed)}</span>
+            Tokens hari ini (TPD){" "}
+            <span className="normal-case">{k.dailyFromGroq ? "· dari Groq" : "· perkiraan"}</span>
           </span>
-          <span className="text-border">│</span>
-          <span>
-            Requests: <span className="font-semibold">{formatNumber(k.totalRequestsMade)}</span>
+          <span className="ml-auto normal-case text-muted">{timeAgo(k.lastUsed)}</span>
+        </div>
+        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
+          <div
+            className={`h-full rounded-full transition-all ${BAR[dailyLevel]}`}
+            style={{ width: `${dailyUsedPct}%` }}
+          />
+        </div>
+        <div className="mt-1 flex justify-between text-xs">
+          <span className={dailyLevel === "red" ? "text-red-400" : "text-muted"}>
+            {formatNumber(k.dailyTokensUsed)} / {formatNumber(k.dailyTokenLimit)}
           </span>
-          <span className="ml-auto text-muted">{timeAgo(k.lastUsed)}</span>
+          <span className="text-muted">Requests: {formatNumber(k.totalRequestsMade)}</span>
         </div>
       </div>
     </div>
