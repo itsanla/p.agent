@@ -33,6 +33,9 @@ export interface KeyState {
   totalTokensUsed: number;
   totalRequestsMade: number;
   lastUsed: number | null; // epoch ms
+  // Authoritative daily-token figures parsed from a Groq 429 (TPD) error.
+  reportedTokensUsed: number | null;
+  reportedTokenLimit: number | null;
 }
 
 /** Shape returned by GET /api/stats for a single key. */
@@ -50,6 +53,12 @@ export interface KeyStatsResponse {
   totalTokensUsed: number;
   totalRequestsMade: number;
   lastUsed: string | null;
+  // Daily token usage shown on the gauge: Groq's reported figure when available
+  // (after a 429), otherwise our own running estimate.
+  dailyTokensUsed: number;
+  dailyTokenLimit: number;
+  /** True when dailyTokensUsed/Limit came straight from Groq (exact). */
+  dailyFromGroq: boolean;
 }
 
 export interface CombinedStatsResponse {
@@ -60,10 +69,14 @@ export interface CombinedStatsResponse {
   totalLimitTokens: number;
   totalRemainingRequests: number;
   totalRequestsToday: number;
+  totalTokensToday: number;
+  totalDailyTokenLimit: number;
 }
 
 export interface StatsResponse {
   keys: KeyStatsResponse[];
   combined: CombinedStatsResponse;
+  /** Daily tokens-per-day limit per key (the constraint that usually bites). */
+  tpdLimit: number;
   updatedAt: string;
 }
