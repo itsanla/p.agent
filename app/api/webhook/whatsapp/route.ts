@@ -17,6 +17,15 @@ import {
   saveChatMessage,
   setChatName,
 } from "@/lib/redis";
+import {
+  buildTrelloTools,
+  hasLeakedToolCall,
+  stripLeakedToolCalls,
+  TRELLO_SYSTEM_HINT,
+} from "@/lib/tools";
+import { isTrelloConfigured } from "@/lib/trello";
+import { sendWhatsAppMessage } from "@/lib/whatsapp";
+import { isOwner } from "@/lib/owner";
 import type { Message, Role } from "@/lib/types";
 
 export const runtime = "nodejs"; // crypto + AI SDK need the Node runtime
@@ -24,7 +33,7 @@ export const maxDuration = 60;
 
 const log = logger("whatsapp");
 
-const RECENT_WINDOW = 20; // recent messages sent verbatim (ample token budget)
+const RECENT_WINDOW = 12; // recent messages verbatim (summary + memory cover the rest)
 const SUMMARY_EVERY = 12; // refresh the rolling summary every N messages
 
 // ── GET: Meta webhook verification ──────────────────────────────────────────
@@ -125,13 +134,22 @@ async function processMessage(phone: string, messageText: string): Promise<void>
     role: m.role,
     content: m.content,
   }));
-  const systemPrompt = buildContextPrompt(memories, summary);
+
+  // Action tools (Trello) are attached only for the owner, and only when configured.
+  const toolsEnabled = isOwner(phone) && isTrelloConfigured();
+  let systemPrompt = buildContextPrompt(memories, summary);
+  if (toolsEnabled) systemPrompt += TRELLO_SYSTEM_HINT;
+  const tools = toolsEnabled ? buildTrelloTools() : undefined;
 
   const assistantMessage: Message = { role: "assistant", content: "", timestamp: Date.now() };
   let reply: string;
   try {
-    const result = await generateAIResponse(llmMessages, systemPrompt);
-    reply = result.text.trim() || "Maaf, aku tidak punya jawaban untuk itu.";
+    const result = await generateAIResponse(llmMessages, systemPrompt, tools);
+    const leaked = hasLeakedToolCall(result.text);
+    reply =
+      stripLeakedToolCalls(result.text) ||
+      "Maaf, aku belum berhasil memprosesnya. Coba ulangi permintaanmu ya.";
+    if (leaked) void log.warn("ai.tool_leak", { phone: masked });
     assistantMessage.keyUsed = result.keyUsed;
     void log.info("ai.ok", {
       phone: masked,
@@ -139,11 +157,14 @@ async function processMessage(phone: string, messageText: string): Promise<void>
       tokens: result.tokensUsed,
       memories: memories.length,
       hasSummary: Boolean(summary),
+      tools: toolsEnabled,
+      leaked,
       ms: Date.now() - startedAt,
     });
   } catch (err) {
-    void log.error("ai.failed", { phone: masked, err: err instanceof Error ? err : String(err) });
-    reply = "Maaf, sedang ada gangguan. Coba lagi sebentar lagi ya.";
+    const errMsg = err instanceof Error ? err.message : String(err);
+    void log.error("ai.failed", { phone: masked, err: errMsg });
+    reply = friendlyError(errMsg);
     assistantMessage.keyUsed = "none";
   }
 
@@ -152,7 +173,7 @@ async function processMessage(phone: string, messageText: string): Promise<void>
   await saveChatMessage(phone, assistantMessage);
 
   // Reply to the user first; memory upkeep runs afterwards (still in background).
-  await sendWhatsAppReply(phone, reply);
+  await sendWhatsAppMessage(phone, reply);
   void log.info("process.done", { phone: masked, ms: Date.now() - startedAt });
 
   await updateMemory(phone, userMessage, assistantMessage, history.length + 1);
@@ -180,37 +201,24 @@ async function updateMemory(
   }
 }
 
-async function sendWhatsAppReply(phone: string, body: string): Promise<void> {
-  const masked = maskPhone(phone);
-  const phoneNumberId = process.env.WA_PHONE_NUMBER_ID;
-  const accessToken = process.env.WA_ACCESS_TOKEN;
-  if (!phoneNumberId || !accessToken) {
-    void log.error("send.skipped", { reason: "WA_PHONE_NUMBER_ID or WA_ACCESS_TOKEN missing" });
-    return;
+// Turn an internal error into a clear user-facing message.
+function friendlyError(msg: string): string {
+  if (/rate limit|tokens per day|\bTPD\b|requests per day|\bRPD\b/i.test(msg)) {
+    const raw = msg.match(/try again in ([0-9hms.]+)/i)?.[1];
+    const when = raw ? ` Coba lagi sekitar ${formatRetry(raw)} lagi ya.` : " Coba lagi nanti ya.";
+    return `Maaf, kuota AI harian sudah habis.${when}`;
   }
+  return "Maaf, sedang ada gangguan. Coba lagi sebentar lagi ya.";
+}
 
-  try {
-    const res = await fetch(`https://graph.facebook.com/v20.0/${phoneNumberId}/messages`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to: phone,
-        type: "text",
-        text: { body },
-      }),
-    });
-    if (!res.ok) {
-      void log.error("send.failed", { phone: masked, status: res.status, body: await res.text() });
-    } else {
-      void log.info("send.ok", { phone: masked, status: res.status });
-    }
-  } catch (err) {
-    void log.error("send.error", { phone: masked, err: err instanceof Error ? err : String(err) });
-  }
+// "36m19.87s" → "± 37 menit", "1h2m3s" → "1 jam 2 menit", "45s" → "± 1 menit".
+function formatRetry(raw: string): string {
+  const h = Number(raw.match(/(\d+)h/)?.[1] ?? 0);
+  const m = Number(raw.match(/(\d+)m/)?.[1] ?? 0);
+  const s = Number(raw.match(/(\d+(?:\.\d+)?)s/)?.[1] ?? 0);
+  if (h > 0) return `${h} jam${m ? ` ${m} menit` : ""}`;
+  const mins = m + (s > 0 ? 1 : 0); // round seconds up to a minute
+  return mins > 0 ? `± ${mins} menit` : `${Math.round(s)} detik`;
 }
 
 // Validate x-hub-signature-256 (HMAC-SHA256 of the raw body with the app secret).
