@@ -13,7 +13,7 @@ import type { Message } from "./types";
 
 const log = logger("memory");
 
-const TOP_K = 8; // retrieve more candidate memories (token budget is ample)
+const TOP_K = 6; // relevant memories to inject (balance recall vs token cost)
 const MIN_RELEVANCE = 0.75; // ignore weakly-related memories (anti-hallucination)
 const DEDUP_THRESHOLD = 0.9; // skip storing a fact this similar to an existing one
 const MAX_FACTS = 8; // facts extracted per exchange
