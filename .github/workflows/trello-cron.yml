@@ -1,0 +1,38 @@
+name: Trello Reminder Cron
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trello-reminder-cron
+  cancel-in-progress: false
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Trigger cron endpoint
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${APP_URL:-}" ]; then
+            echo "APP_URL is not set"; exit 1; fi
+          if [ -z "${CRON_SECRET:-}" ]; then
+            echo "CRON_SECRET is not set"; exit 1; fi
+          BASE_URL="${APP_URL%/}"
+          TARGET_URL="$BASE_URL/api/cron/trello-reminder"
+          echo "Triggering $TARGET_URL"
+          curl -fsS --retry 3 --retry-delay 10 --retry-connrefused --retry-all-errors \
+            --connect-timeout 10 --max-time 30 \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "User-Agent: github-actions-cron" \
+            -H "Accept: application/json" \
+            "$TARGET_URL"

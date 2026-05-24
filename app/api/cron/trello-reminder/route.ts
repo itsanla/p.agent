@@ -12,7 +12,7 @@ const log = logger("cron");
 const REMIND_WINDOW_HOURS = 24;
 
 // Notify the owner about Trello cards due within 24h. Idempotent per card+due via
-// a Redis marker, so repeated cron runs don't spam. Trigger hourly (see vercel.json).
+// a Redis marker, so repeated cron runs don't spam. Triggered by a scheduler.
 export async function GET(req: NextRequest): Promise<Response> {
   // Auth: allow Vercel Cron, or a matching CRON_SECRET bearer/query.
   const secret = process.env.CRON_SECRET;
