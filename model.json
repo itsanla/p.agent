@@ -1,0 +1,92 @@
+[
+  {
+    "name": "Llama 3.1 8B",
+    "id": "llama-3.1-8b-instant",
+    "provider": "Meta",
+    "limits": {
+      "requests_per_minute": 30,
+      "requests_per_day": 14400,
+      "tokens_per_minute": 6000,
+      "tokens_per_day": 500000
+    },
+    "metadata": {
+      "release_stage": "Production",
+      "released_date": "September 3, 2023"
+    }
+  },
+  {
+    "name": "Llama 3.3 70B",
+    "id": "llama-3.3-70b-versatile",
+    "provider": "Meta",
+    "limits": {
+      "requests_per_minute": 30,
+      "requests_per_day": 1000,
+      "tokens_per_minute": 12000,
+      "tokens_per_day": 100000
+    },
+    "metadata": {
+      "release_stage": "Production",
+      "released_date": "December 6, 2024"
+    }
+  },
+  {
+    "name": "Llama 4 Scout 17B 16E",
+    "id": "meta-llama/llama-4-scout-17b-16e-instruct",
+    "provider": "Meta",
+    "limits": {
+      "requests_per_minute": 30,
+      "requests_per_day": 1000,
+      "tokens_per_minute": 30000,
+      "tokens_per_day": 500000
+    },
+    "metadata": {
+      "release_stage": "Preview",
+      "released_date": "April 6, 2025"
+    }
+  },
+  {
+    "name": "GPT OSS 120B",
+    "id": "openai/gpt-oss-120b",
+    "provider": "OpenAI",
+    "limits": {
+      "requests_per_minute": 30,
+      "requests_per_day": 1000,
+      "tokens_per_minute": 8000,
+      "tokens_per_day": 200000
+    },
+    "metadata": {
+      "release_stage": "Production",
+      "released_date": "August 5, 2025"
+    }
+  },
+  {
+    "name": "GPT OSS 20B",
+    "id": "openai/gpt-oss-20b",
+    "provider": "OpenAI",
+    "limits": {
+      "requests_per_minute": 30,
+      "requests_per_day": 1000,
+      "tokens_per_minute": 8000,
+      "tokens_per_day": 200000
+    },
+    "metadata": {
+      "release_stage": "Production",
+      "released_date": "August 5, 2025"
+    }
+  },
+  {
+    "name": "Safety GPT OSS 20B",
+    "id": "openai/gpt-oss-safeguard-20b",
+    "provider": "OpenAI",
+    "limits": {
+      "requests_per_minute": 30,
+      "requests_per_day": 1000,
+      "tokens_per_minute": 8000,
+      "tokens_per_day": 200000
+    },
+    "metadata": {
+      "release_stage": "Preview",
+      "released_date": "October 29, 2025"
+    }
+  }
+]
