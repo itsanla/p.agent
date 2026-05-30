@@ -5,22 +5,22 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 
 const NAV = [
-  { href: "/", label: "Dashboard", icon: "📊" },
-  { href: "/conversations", label: "Conversations", icon: "💬" },
+  { href: "/", label: "Chat", icon: "💬" },
+  { href: "/research", label: "Deep Research", icon: "🔬" },
+  { href: "/usage", label: "Usage", icon: "📊" },
 ];
 
 export function Sidebar() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
-  const isActive = (href: string) =>
-    href === "/" ? pathname === "/" : pathname.startsWith(href);
+  const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
   return (
     <>
       {/* Mobile top bar */}
       <div className="flex items-center justify-between border-b border-border bg-surface px-4 py-3 md:hidden">
-        <span className="font-semibold">⚡ p.agent</span>
+        <span className="font-semibold">⚡ Linda</span>
         <button
           onClick={() => setOpen((v) => !v)}
           className="rounded-md border border-border px-3 py-1 text-sm text-muted"
@@ -37,7 +37,7 @@ export function Sidebar() {
       >
         <div className="hidden items-center gap-2 px-6 py-5 md:flex">
           <span className="text-xl">⚡</span>
-          <span className="text-lg font-semibold tracking-tight">p.agent</span>
+          <span className="text-lg font-semibold tracking-tight">Linda</span>
         </div>
         <nav className="flex flex-col gap-1 p-3">
           {NAV.map((item) => (
@@ -57,9 +57,9 @@ export function Sidebar() {
           ))}
         </nav>
         <div className="hidden px-6 py-4 text-xs text-muted md:block">
-          WhatsApp AI Agent
+          Asisten pribadi
           <br />
-          Groq Llama 3.3 70B
+          WhatsApp · Web · Trello
         </div>
       </aside>
     </>
