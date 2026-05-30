@@ -1,100 +1,141 @@
 # Ringkasan Teknologi & Penerapan — p.agent (Linda)
 
-Ringkasan teknis arsitektur dan teknologi yang diterapkan pada project ini.
-**Linda** adalah AI agent pribadi yang menerima & membalas pesan WhatsApp,
-ditenagai Groq Llama 3.3 70B, dengan manajemen konteks/memori jangka panjang.
+**Linda** adalah AI agent pribadi yang menerima & membalas pesan lewat **WhatsApp** dan
+**antarmuka web**, ditenagai Groq (multi-key failover), dengan memori jangka panjang.
+Arsitektur kini sepenuhnya di **Cloudflare** (sebelumnya Next.js di Vercel).
+
+> Catatan: `claude.md` adalah prompt pembangunan awal (arsitektur lama Vercel) — disimpan
+> sebagai arsip. Dokumen **ini** adalah sumber kebenaran arsitektur saat ini.
 
 ---
+
+## Arsitektur
+
+```
+apps/web  → Next.js static export (out/) di Cloudflare Pages
+  /        → chat interaktif        → POST {API}/chat
+  /usage   → pemantauan kuota Groq  → GET  {API}/usage (+ /usage/:keyIndex)
+  Gate shared-secret (localStorage → header x-linda-secret)
+
+apps/api  → Hono.js di Cloudflare Worker (SEMUA logika backend)
+  bindings: DB (D1), VECTORIZE (Vectorize), AI (Workers AI)
+  D1 = sumber kebenaran · Upstash Redis = cache · Vectorize = memori semantik
+```
 
 ## Tech Stack
 
-| Lapisan | Teknologi | Versi |
-|---|---|---|
-| Framework | Next.js (App Router, TypeScript strict) | 16.2.6 |
-| UI | React + Tailwind CSS (komponen dibuat manual) | 19.2 / v4 |
-| LLM SDK | Vercel AI SDK (`ai`) + `@ai-sdk/groq` | 6.x / 3.x |
-| Model | Groq **Llama 3.3 70B** (chat) + Llama 3.1 8B (opsional util) | — |
-| Database | Upstash Redis (`@upstash/redis`) | 1.38 |
-| Vector DB | Upstash Vector (`@upstash/vector`), embedding **BGE-M3** | 1.2 |
-| Deploy | Vercel (runtime Node.js) | — |
-| Channel | Meta WhatsApp Cloud API (Graph API v20.0) | — |
+| Lapisan | Teknologi |
+|---|---|
+| Backend | **Hono.js** di Cloudflare Worker |
+| Frontend | Next.js 16 `output: 'export'` (static) → Cloudflare Pages, React 19 + Tailwind v4 |
+| LLM SDK | Vercel AI SDK (`ai`) + `@ai-sdk/groq` (jalan di Worker) |
+| Model chat | Groq **Llama 3.3 70B** (utama) · utility/memori **Llama 3.1 8B** |
+| Sumber kebenaran | **Cloudflare D1** (Drizzle ORM) |
+| Cache | **Upstash Redis** (`@upstash/redis`) — dedup, working-memory, live key-state |
+| Memori vektor | **Cloudflare Vectorize** (1024-dim, cosine) |
+| Embedding | **Workers AI `@cf/baai/bge-m3`** (1024-dim, multibahasa, di edge) |
+| Channel | Meta WhatsApp Cloud API + Web | 
+| Tools | Trello (read/write, board tunggal, owner-only) |
+| Cron | Cloudflare Cron Trigger (`scheduled`) — reminder Trello via WhatsApp |
 
----
+## Kapasitas Groq (tervalidasi)
 
-## Komponen Utama
+- 15 API key tersedia; **10 aktif, 5 restricted** (anlayx.02–06 → org restricted, di-skip otomatis).
+- **6 model** per key (lihat `model.json`), semua callable; limit cocok header live Groq.
+- Kapasitas riil = **10 key × 6 model = 60 slot** (bukan 75). Limit harian gabungan per key ≈ 1,7 jt token.
+- Manager: deteksi N key dinamis, failover **antar-key** (model tetap, tanpa cross-model),
+  tandai 403 (restricted) permanen & 429 (rate limit) dengan backoff. Usage dicatat per **key × model** di D1.
 
-### 1. Multi-key Groq Manager dengan Failover (`lib/groq-manager.ts`)
-- Auto-deteksi semua env `GROQ_API_KEY_*` (jumlah dinamis, tanpa batas hardcode).
-- Memilih key dengan sisa token terbanyak; **failover otomatis saat 429** (maks 3 retry lintas-key).
-- Parsing header rate-limit Groq (`x-ratelimit-*`, format `"2m30.5s"`) → ms.
-- Statistik token/permintaan per key dipersistensi di Redis (date-stamped, TTL 48 jam = reset harian).
-- Opsi `model` & `temperature` per panggilan; batas output token (`GROQ_MAX_OUTPUT_TOKENS`, default 2048).
-- Singleton lintas request dalam satu instance serverless.
+## Pencarian Web & Deep Research (Tavily — tervalidasi)
 
-### 2. Webhook WhatsApp (`app/api/webhook/whatsapp/route.ts`)
-- **GET**: verifikasi challenge Meta (`hub.verify_token`).
-- **POST**: validasi **HMAC `x-hub-signature-256`** terhadap `WA_APP_SECRET`, dedup pesan,
-  balas `200` cepat lalu proses di background (`after()`), kirim balasan via Graph API.
-- Runtime Node.js, `maxDuration = 60`.
+Dua mode (semua owner-only):
+- **Normal** (WhatsApp + web): tool `web_search` (Tavily basic, 1 kredit) + `web_extract` dipanggil
+  PROAKTIF oleh model chat (70B) untuk hal aktual/teknis → anti-halusinasi. Skema tool sengaja
+  minimal (1 string) karena enum/array membuat tool-calling Llama di Groq gagal ("Failed to call a function").
+- **Deep Search** (web saja → jurnal): pipeline custom **DOI-only ketat** di `lib/research.ts`:
+  plan (gpt-oss-120b) → discover **OpenAlex** (`has_doi:true`) → verify **Crossref** (hanya DOI yang
+  resolve masuk daftar pustaka) → konteks web (Tavily, tak disitasi) → baca abstrak/OA full-text →
+  sintesis (Scout, TPM 30k) → tulis manuscript IEEE (70B, TPM 12k — 120B TPM 8k terlalu kecil utk output besar)
+  → finalisasi sitasi (keep cited, renumber). Output JSON {title, abstract, keywords, sections[], references[]}.
+- Tavily: `TAVILY_API_KEY_*` dinamis (5+), failover 401/429, kredit dilacak bulanan per key di D1
+  (`tavily_usage`, dari field `usage`/perhitungan). Sumber ilmiah gratis: OpenAlex + Crossref (polite `mailto`).
 
-### 3. Manajemen Konteks & Memori (bertingkat 3 lapis)
-Pola modern (mirip mem0/Zep) — **hanya kirim konteks relevan**, hemat token:
-- **Working memory** — 20 pesan terakhir verbatim dari Redis list (maks 50 per nomor).
-- **Rolling summary** — ringkasan berkelanjutan di Redis (`chat:summary:{phone}`), diperbarui berkala.
-- **Long-term semantic** (`lib/memory.ts` + `lib/vector.ts`) — fakta diekstrak tiap giliran,
-  disimpan di Upstash Vector (BGE-M3, multibahasa, **0 token Groq**), di-namespace per nomor.
-  Retrieval semantik top-8 dengan ambang relevansi 0.75 (anti-halusinasi) + dedup 0.9.
-- Semua dikunci ke **nomor pengirim** (`message.from`); tahan ganti API key & nomor bisnis;
-  fakta tanpa kedaluwarsa → bisa mengingat percakapan lama.
+### Pemetaan model peran (TPM-aware, failover antar-key)
+chat normal = **70B**; utility/memori = **8B**; deep: plan = **gpt-oss-120b**, sintesis = **Scout**,
+tulis = **70B**; (safeguard-20b dicadangkan; integrity-check sitasi dilakukan programatik).
 
-### 4. Dashboard & API
-- `/` — pemantauan token per key + gabungan, auto-refresh 30 detik (`/api/stats`).
-- `/conversations` & `/conversations/[phone]` — daftar & detail percakapan, hapus riwayat.
-- API: `/api/stats`, `/api/conversations`, `/api/conversations/[phone]` (GET/DELETE).
+## Komponen Utama (`apps/api/src`)
 
-### 5. Observabilitas (`lib/logger.ts`)
-- Event log ke `logs/next.log` + console untuk setiap tahap logika WhatsApp
-  (verify, signature, AI, memory.search/extract, send) — sukses & error.
+- `index.ts` — Hono routes: webhook WhatsApp (GET verify, POST + HMAC WebCrypto → `waitUntil`),
+  `/chat`, `/usage`, `/usage/:keyIndex`, `/usage/tavily`, `/history`, `POST /research`,
+  `GET /research/:id` (di-gate secret), `scheduled` cron.
+- `lib/groq.ts` — multi-key manager (failover antar-key, usage→D1, state→Redis; 403=restricted,
+  413=request-too-large fail-fast, 429=backoff).
+- `lib/tavily.ts` — manager Tavily multi-key (search/extract, kredit→D1).
+- `lib/scholar.ts` — OpenAlex (discovery) + Crossref (verifikasi DOI) + format IEEE.
+- `lib/research.ts` — pipeline deep-research DOI-only (async, status→D1).
+- `lib/agent.ts` — inti `generateReply` + `runUpkeep`; gabung web + Trello tools (owner).
+- `lib/vector.ts` — Vectorize + bge-m3 (search, store, dedup). Ambang relevansi **0.55**
+  (kalibrasi bge-m3 cosine; dedup exact-text via D1 untuk eventual-consistency Vectorize).
+- `lib/memory.ts` — ekstraksi fakta + rolling summary (model utility).
+- `lib/db.ts` (Drizzle D1), `lib/cache.ts` (Redis), `lib/trello.ts`, `lib/tools.ts`,
+  `lib/whatsapp.ts`, `lib/owner.ts`, `lib/system-prompt.ts`, `lib/usage.ts`, `lib/models.ts`.
 
----
+Frontend: `apps/web/app/research/page.tsx` (submit topik → polling → render manuscript + export
+**.doc**/PDF zero-dependency), section kredit Tavily di `/usage`.
 
 ## Model Data
 
 ```
-Redis:
-  chat:history:{phone}     → list pesan (JSON, maks 50, urut terbaru di depan)
-  chat:metadata:{phone}    → { lastActive, totalMessages, name, lastMessage }
-  chat:summary:{phone}     → ringkasan berkelanjutan
-  chat:index               → set semua nomor aktif
-  processed:msg:{id}       → penanda dedup (TTL 24 jam)
-  groq:stats:{tgl}:key{n}  → statistik token/permintaan (TTL 48 jam)
+D1 (sumber kebenaran):
+  messages         (riwayat per phone, + key_used/model_used)
+  conversations    (metadata per phone, last_inbound utk jendela 24h WA)
+  summaries        (rolling summary per phone)
+  memory_facts     (teks fakta + id vektor; dedup exact-text)
+  usage_counters   PK(date, key_index, model) — token/request Groq harian
+  tavily_usage     PK(month, key_index) — kredit Tavily bulanan
+  research_tasks   (id, topic, status, stage, manuscript JSON) — deep research async
 
-Upstash Vector (dim 1024, COSINE, BGE-M3):
-  namespace = {phone}
-  id        = mem:{phone}:{uuid}
-  data      = teks fakta   (di-embed otomatis)
-  metadata  = { phone, createdAt, kind: "fact" }
+Vectorize (linda-memory, dim 1024, cosine):
+  namespace = {phone}, id = mem:{phone}:{uuid}
+  values = embedding bge-m3, metadata = { phone, text, createdAt, kind:"fact" }
+
+Redis (cache, TTL): processed:msg:* (dedup) · chat:hist:* (working memory) ·
+  groq:state:* (live rate-limit) · trello:reminded:* (idempotensi reminder)
 ```
 
----
+## Environment
 
-## Variabel Environment
+**Worker** (`apps/api/.dev.vars` lokal / `wrangler secret put` produksi):
+`GROQ_API_KEY_1..15`, `TAVILY_API_KEY_1..N`, `UPSTASH_REDIS_REST_URL/TOKEN`,
+`WA_PHONE_NUMBER_ID/ACCESS_TOKEN/APP_SECRET`, `WEBHOOK_VERIFY_TOKEN`, `OWNER_PHONE`,
+`TRELLO_API_KEY/TOKEN/BOARD_ID`, `WEB_AUTH_SECRET`, opsional `GROQ_CHAT_MODEL`, `GROQ_UTILITY_MODEL`,
+`GROQ_PLAN_MODEL`, `GROQ_SYNTH_MODEL`, `GROQ_WRITE_MODEL`, `SCHOLAR_MAILTO`, `TAVILY_MONTHLY_CREDITS`,
+`SYSTEM_PROMPT`, `APP_TIMEZONE`.
+Bindings (wrangler.jsonc): `DB`, `VECTORIZE`, `AI`.
 
-| Variabel | Wajib | Keterangan |
-|---|---|---|
-| `GROQ_API_KEY_1..N` | ya | Satu/lebih Groq API key (auto-deteksi). |
-| `GROQ_MODEL` | tidak | Override model chat (default `llama-3.3-70b-versatile`). |
-| `GROQ_MEMORY_MODEL` | tidak | Model ekstraksi/ringkasan memori. |
-| `GROQ_MAX_OUTPUT_TOKENS` / `GROQ_CHAT_TEMPERATURE` | tidak | Kontrol panjang & kreativitas balasan. |
-| `UPSTASH_REDIS_REST_URL` / `_TOKEN` | ya | Upstash Redis. |
-| `UPSTASH_VECTOR_REST_URL` / `_TOKEN` | tidak | Upstash Vector (memori jangka panjang; kosong = nonaktif). |
-| `WA_PHONE_NUMBER_ID` / `WA_ACCESS_TOKEN` / `WA_APP_SECRET` / `WEBHOOK_VERIFY_TOKEN` | ya | Meta WhatsApp Cloud API. |
-| `APP_TIMEZONE` | tidak | Zona waktu kesadaran waktu prompt (default `Asia/Jakarta`). |
+**Frontend** (`apps/web/.env`): `NEXT_PUBLIC_API_URL` (URL Worker).
 
----
+## Menjalankan & Deploy
 
-## Roadmap (belum diterapkan)
+```bash
+# Backend (Worker) — D1 lokal + Vectorize/AI remote
+cd apps/api
+pnpm install
+pnpm db:migrate:local          # atau db:migrate:remote utk produksi
+pnpm dev                       # http://localhost:8787
 
-- **Fase 3 memori**: konsolidasi & decay (perbarui fakta yang berubah, expire usang) + UI memori di dashboard.
-- **Tool calling**: integrasi read/write Trello, Google Calendar/Drive/Gmail, Zoho Mail
-  (single-owner, allowlist nomor pemilik, konfirmasi untuk aksi menulis).
+# Frontend
+cd apps/web
+pnpm install
+pnpm dev                       # http://localhost:3000  (/ chat, /usage)
+pnpm build                     # → out/ untuk Cloudflare Pages
+
+# Deploy
+cd apps/api && pnpm deploy                       # Worker (set secrets dulu)
+cd apps/web && pnpm build && npx wrangler pages deploy out
+```
+
+Resource Cloudflare (sekali):
+`wrangler vectorize create linda-memory --dimensions=1024 --metric=cosine` lalu
+`wrangler vectorize create-metadata-index linda-memory --property-name=phone --type=string`.
