@@ -1,5 +1,11 @@
 # Prompt untuk Claude Opus — AI Agent Coder
 
+> ⚠️ **ARSIP / HISTORIS.** Prompt ini menggambarkan pembangunan awal di **Next.js + Vercel +
+> Upstash Redis/Vector**. Proyek telah **dimigrasi ke Cloudflare**: backend Hono.js (Worker),
+> frontend Next.js static export (Pages), D1 sebagai sumber kebenaran, Redis sebagai cache,
+> Vectorize + Workers AI bge-m3 untuk memori, dan integrasi Slack dihapus.
+> **Sumber kebenaran arsitektur saat ini ada di [`summary.md`](./summary.md).**
+
 Gunakan prompt ini di Claude Opus 4 / Claude Code sebagai instruksi membangun project dari awal.
 
 ---
