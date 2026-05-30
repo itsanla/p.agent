@@ -31,3 +31,6 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# drizzle: keep migrations (needed by `wrangler d1 migrations apply`), ignore introspection meta
+worker-configuration.d.ts
