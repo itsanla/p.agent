@@ -43,3 +43,4 @@ logs
 *.tsbuildinfo
 next-env.d.ts
 .playwright-mcp
+.dev.vars

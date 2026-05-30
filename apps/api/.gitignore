@@ -34,3 +34,4 @@ lerna-debug.log*
 
 # drizzle: keep migrations (needed by `wrangler d1 migrations apply`), ignore introspection meta
 worker-configuration.d.ts
+wrangler.jsonc
