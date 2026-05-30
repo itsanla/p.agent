@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
 import { drizzle, type DrizzleD1Database } from "drizzle-orm/d1";
 import {
   conversations,
@@ -9,7 +9,11 @@ import {
   tavilyUsage,
   usageCounters,
 } from "../db/schema";
+import { maskPhone } from "./format";
+import { logger } from "./logger";
 import type { Message } from "./types";
+
+const log = logger("db");
 
 export type DB = DrizzleD1Database<Record<string, never>>;
 
@@ -29,6 +33,7 @@ export async function getChatHistory(db: DB, phone: string, limit = 50): Promise
     .orderBy(desc(messages.createdAt))
     .limit(limit);
 
+  log.info("getChatHistory", { phone: maskPhone(phone), rows: rows.length, limit });
   return rows
     .map((r) => ({
       role: r.role as Message["role"],
@@ -40,8 +45,45 @@ export async function getChatHistory(db: DB, phone: string, limit = 50): Promise
     .reverse();
 }
 
+export interface MessageRow extends Message {
+  id: number;
+}
+
+/**
+ * Paginated history (newest-first by id, returned chronological). `before` loads
+ * older messages (id < before) for infinite scroll-up. Includes row ids so the
+ * client can paginate + cache.
+ */
+export async function getMessagesPage(
+  db: DB,
+  phone: string,
+  opts: { before?: number; limit?: number } = {},
+): Promise<MessageRow[]> {
+  const limit = Math.min(opts.limit ?? 30, 100);
+  const conds = [eq(messages.phone, phone)];
+  if (opts.before && opts.before > 0) conds.push(lt(messages.id, opts.before));
+  const rows = await db
+    .select()
+    .from(messages)
+    .where(and(...conds))
+    .orderBy(desc(messages.id))
+    .limit(limit);
+  log.info("getMessagesPage", { phone: maskPhone(phone), rows: rows.length, before: opts.before ?? null });
+  return rows
+    .map((r) => ({
+      id: r.id,
+      role: r.role as Message["role"],
+      content: r.content,
+      timestamp: r.createdAt,
+      keyUsed: r.keyUsed ?? undefined,
+      modelUsed: r.modelUsed ?? undefined,
+    }))
+    .reverse();
+}
+
 /** Append a message and upsert conversation metadata in one batch. */
 export async function saveChatMessage(db: DB, phone: string, m: Message): Promise<void> {
+  log.info("saveChatMessage", { phone: maskPhone(phone), role: m.role, chars: m.content.length, keyUsed: m.keyUsed, model: m.modelUsed });
   await db.batch([
     db.insert(messages).values({
       phone,
@@ -114,6 +156,7 @@ export async function getSummary(db: DB, phone: string): Promise<string> {
 }
 
 export async function setSummary(db: DB, phone: string, summary: string): Promise<void> {
+  log.info("setSummary", { phone: maskPhone(phone), chars: summary.length });
   const now = Date.now();
   await db
     .insert(summaries)
@@ -124,6 +167,7 @@ export async function setSummary(db: DB, phone: string, summary: string): Promis
 // ── Memory facts (mirror of Vectorize) ────────────────────────────────────────
 
 export async function recordFact(db: DB, id: string, phone: string, fact: string): Promise<void> {
+  log.info("recordFact", { phone: maskPhone(phone), id, fact: fact.slice(0, 80) });
   await db
     .insert(memoryFacts)
     .values({ id, phone, fact, createdAt: Date.now() })
@@ -159,6 +203,7 @@ export async function addUsage(
   model: string,
   tokens: number,
 ): Promise<void> {
+  log.info("addUsage", { date, keyIndex, model, tokens });
   const now = Date.now();
   await db
     .insert(usageCounters)
@@ -214,6 +259,7 @@ export async function addTavilyUsage(
   keyIndex: number,
   credits: number,
 ): Promise<void> {
+  log.info("addTavilyUsage", { month, keyIndex, credits });
   const now = Date.now();
   await db
     .insert(tavilyUsage)
@@ -250,6 +296,7 @@ export interface ResearchTaskRow {
 }
 
 export async function createResearchTask(db: DB, id: string, topic: string): Promise<void> {
+  log.info("createResearchTask", { id, topic: topic.slice(0, 80) });
   const now = Date.now();
   await db.insert(researchTasks).values({
     id,
@@ -266,6 +313,7 @@ export async function updateResearchTask(
   id: string,
   patch: Partial<Pick<ResearchTaskRow, "status" | "stage" | "manuscript" | "error">>,
 ): Promise<void> {
+  log.info("updateResearchTask", { id, status: patch.status, stage: patch.stage, hasManuscript: patch.manuscript != null, error: patch.error ?? undefined });
   await db
     .update(researchTasks)
     .set({ ...patch, updatedAt: Date.now() })

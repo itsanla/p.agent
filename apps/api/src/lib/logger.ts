@@ -1,6 +1,9 @@
 // Lightweight console logger for the Worker (no filesystem). Same API as the old
 // Next.js logger so ported code keeps working: logger(scope).info/warn/error.
 // Returns void (not a promise) — callers may still `void log.info(...)`.
+// Every line is ALSO buffered for HTTP shipping to the logs service (apps/logs).
+
+import { pushLog } from "./logsink";
 
 type Level = "INFO" | "WARN" | "ERROR";
 
@@ -24,10 +27,13 @@ function serializeMeta(meta?: Record<string, unknown>): string {
 }
 
 function write(level: Level, scope: string, event: string, meta?: Record<string, unknown>): void {
-  const line = `[${new Date().toISOString()}] [${level}] [${scope}] ${event}${serializeMeta(meta)}`;
+  const suffix = serializeMeta(meta);
+  const line = `[${new Date().toISOString()}] [${level}] [${scope}] ${event}${suffix}`;
   if (level === "ERROR") console.error(line);
   else if (level === "WARN") console.warn(line);
   else console.log(line);
+  // Buffer for HTTP shipping to apps/logs (flushed per request/task).
+  pushLog({ ts: Date.now(), level: level.toLowerCase(), service: scope, message: `${event}${suffix}` });
 }
 
 export function logger(scope: string) {

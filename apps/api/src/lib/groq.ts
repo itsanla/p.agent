@@ -1,5 +1,5 @@
 import { createGroq } from "@ai-sdk/groq";
-import { APICallError, generateText, stepCountIs, type ToolSet } from "ai";
+import { APICallError, generateText, stepCountIs, streamText, type ToolSet } from "ai";
 import type { Cache } from "./cache";
 import { addUsage, type DB } from "./db";
 import { logger } from "./logger";
@@ -19,6 +19,8 @@ export interface GenerateOptions {
   tools?: ToolSet;
   maxSteps?: number;
   maxOutputTokens?: number;
+  /** Called after each tool-calling step — used to stream search progress events. */
+  onStepFinish?: (step: unknown) => void | Promise<void>;
 }
 
 export interface GenerateResult {
@@ -27,6 +29,7 @@ export interface GenerateResult {
   modelUsed: string;
   tokensUsed: number;
 }
+
 
 interface KeyEntry {
   apiKey: string;
@@ -106,6 +109,15 @@ function isRestrictedError(err: APICallError): boolean {
 /** A per-request size error (model TPM too small) — failover across keys won't help. */
 function isRequestTooLarge(err: APICallError): boolean {
   return err.statusCode === 413 || /request too large|reduce your message size/i.test(err.message ?? "");
+}
+
+/**
+ * Groq/Llama occasionally emit a malformed tool call → 400 "Failed to call a
+ * function". It's stochastic, so re-sampling (retry on another key) usually
+ * succeeds — treat it as retryable rather than a hard failure.
+ */
+function isToolCallError(err: APICallError): boolean {
+  return /failed to call a function|failed_generation|tool[_ ]use[_ ]failed/i.test(err.message ?? "");
 }
 
 export class GroqManager {
@@ -246,9 +258,12 @@ export class GroqManager {
       const entry = this.selectKey(tried);
       if (!entry) break;
       tried.add(entry.state.index);
+      log.info("attempt", { attempt, key: entry.state.index, model, tools: opts.tools ? Object.keys(opts.tools).length : 0 });
 
       try {
-        return await this.runOnce(entry, model, messages, opts);
+        const r = await this.runOnce(entry, model, messages, opts);
+        log.info("generate.ok", { key: entry.state.index, model, tokens: r.tokensUsed });
+        return r;
       } catch (err) {
         lastError = err;
         if (err instanceof APICallError) {
@@ -265,6 +280,11 @@ export class GroqManager {
           }
           // Request too large for this model's TPM — same on every key; fail fast.
           if (isRequestTooLarge(err)) throw err;
+          // Malformed tool call — re-sample on another key (stochastic), keep trying.
+          if (isToolCallError(err)) {
+            log.warn("toolcall.retry", { key: entry.state.index, attempt });
+            continue;
+          }
         }
         // Non-rate-limit error: retry once on another key, then give up.
         if (attempt >= 1) throw err;
@@ -274,6 +294,75 @@ export class GroqManager {
     throw lastError instanceof Error
       ? lastError
       : new Error("All Groq API keys are restricted, rate limited, or unavailable.");
+  }
+
+  /**
+   * Real token-by-token streaming (NO tools — Groq/Llama leak tool calls as text
+   * when streaming, so tools are handled separately by the caller). Emits each
+   * text chunk via `onDelta`. Fails over across keys only before the first chunk.
+   */
+  async streamComplete(
+    messages: { role: "user" | "assistant"; content: string }[],
+    opts: GenerateOptions,
+    onDelta: (chunk: string) => void | Promise<void>,
+  ): Promise<GenerateResult> {
+    if (this.keys.length === 0) throw new Error("No Groq API keys configured (set GROQ_API_KEY_1, ...).");
+    await this.hydrate();
+    const model = opts.model ?? this.chatModel;
+    const tried = new Set<number>();
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < this.keys.length; attempt++) {
+      const entry = this.selectKey(tried);
+      if (!entry) break;
+      tried.add(entry.state.index);
+      log.info("streamComplete.attempt", { attempt, key: entry.state.index, model });
+      const groq = createGroq({ apiKey: entry.apiKey });
+      let emitted = false;
+      try {
+        const result = streamText({
+          model: groq(model),
+          system: opts.systemPrompt,
+          messages,
+          maxOutputTokens: opts.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
+          temperature: opts.temperature,
+        });
+        const t0 = Date.now();
+        let firstAt = -1;
+        let chunks = 0;
+        for await (const chunk of result.textStream) {
+          if (chunk) {
+            if (firstAt < 0) firstAt = Date.now() - t0;
+            chunks++;
+            emitted = true;
+            await onDelta(chunk);
+          }
+        }
+        this.applyHeaders(entry.state, ((await result.response)?.headers ?? {}) as Record<string, string | undefined>);
+        const text = await result.text;
+        const tokensUsed = (await result.totalUsage)?.totalTokens ?? (await result.usage)?.totalTokens ?? 0;
+        await this.persistUsage(entry.state, model, tokensUsed);
+        // firstChunkMs vs streamMs proves server-side streaming (independent of transport buffering).
+        log.info("streamComplete.ok", { key: entry.state.index, model, tokens: tokensUsed, chunks, firstChunkMs: firstAt, streamMs: Date.now() - t0 });
+        return { text, keyUsed: `key${entry.state.index}`, modelUsed: model, tokensUsed };
+      } catch (err) {
+        lastError = err;
+        if (!emitted && err instanceof APICallError) {
+          if (isRestrictedError(err)) {
+            entry.state.restricted = true;
+            await this.cache.setKeyState(entry.state.index, entry.state);
+            continue;
+          }
+          if (err.statusCode === 429) {
+            this.handle429(entry.state, err.responseHeaders, err.message);
+            await this.cache.setKeyState(entry.state.index, entry.state);
+            continue;
+          }
+        }
+        throw err;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("All Groq API keys are restricted, rate limited, or unavailable.");
   }
 
   private async runOnce(
@@ -290,6 +379,7 @@ export class GroqManager {
         messages,
         maxOutputTokens: opts.maxOutputTokens ?? MAX_OUTPUT_TOKENS,
         temperature: opts.temperature,
+        ...(opts.onStepFinish ? { onStepFinish: opts.onStepFinish } : {}),
         ...(opts.tools ? { tools: opts.tools, stopWhen: stepCountIs(opts.maxSteps ?? 6) } : {}),
       });
       this.applyHeaders(entry.state, (result.response?.headers ?? {}) as Record<string, string | undefined>);

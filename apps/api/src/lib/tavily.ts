@@ -182,7 +182,9 @@ export class TavilyManager {
       tried.add(key.index);
       try {
         const data = await this.post<TavilySearchRaw>(SEARCH_URL, key, body);
-        await this.chargeCredits(key.index, data.usage?.total ?? cost);
+        const credits = data.usage?.total ?? cost;
+        await this.chargeCredits(key.index, credits);
+        log.info("search.ok", { keyUsed: key.index, depth, query: query.slice(0, 80), results: data.results?.length ?? 0, credits });
         return {
           answer: data.answer ?? null,
           results: (data.results ?? []).map((r) => ({
@@ -196,7 +198,10 @@ export class TavilyManager {
         };
       } catch (err) {
         lastErr = err;
-        if (err instanceof TavilyError && (err.status === 401 || err.status === 429)) continue;
+        if (err instanceof TavilyError && (err.status === 401 || err.status === 429)) {
+          log.warn("search.failover", { key: key.index, status: err.status });
+          continue;
+        }
         throw err;
       }
     }
@@ -218,6 +223,7 @@ export class TavilyManager {
         const ok = data.results ?? [];
         const credits = Math.max(1, Math.ceil(ok.length / 5)) * (depth === "advanced" ? 2 : 1);
         if (ok.length > 0) await this.chargeCredits(key.index, credits);
+        log.info("extract.ok", { keyUsed: key.index, urls: urls.length, extracted: ok.length, credits });
         return ok.map((r) => ({ url: r.url, rawContent: r.raw_content ?? "" }));
       } catch (err) {
         if (err instanceof TavilyError && (err.status === 401 || err.status === 429)) continue;

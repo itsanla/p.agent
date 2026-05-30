@@ -36,6 +36,7 @@ export async function embed(env: Env, texts: string[]): Promise<number[][]> {
     res.data ??
     (Array.isArray(res.response) ? res.response : res.response?.data) ??
     [];
+  log.info("embed", { texts: texts.length, vectors: data.length, dims: data[0]?.length ?? 0 });
   return data;
 }
 

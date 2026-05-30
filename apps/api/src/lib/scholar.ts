@@ -66,7 +66,7 @@ export async function openAlexSearch(
       return [];
     }
     const data = (await res.json()) as { results?: OpenAlexWork[] };
-    return (data.results ?? [])
+    const out = (data.results ?? [])
       .map((w): ScholarCandidate | null => {
         const doi = bareDoi(w.doi);
         if (!doi || !w.title) return null;
@@ -81,6 +81,8 @@ export async function openAlexSearch(
         };
       })
       .filter((c): c is ScholarCandidate => c !== null);
+    log.info("openalex.search", { query: query.slice(0, 80), candidates: out.length });
+    return out;
   } catch (err) {
     log.error("openalex.error", { err: err instanceof Error ? err : String(err) });
     return [];
@@ -92,9 +94,13 @@ export async function crossrefVerify(doi: string, mailto = "linda@example.com"):
   const url = `${CROSSREF}/${encodeURIComponent(doi)}?mailto=${encodeURIComponent(mailto)}`;
   try {
     const res = await fetch(url, { headers: { "User-Agent": `Linda (${mailto})` } });
-    if (!res.ok) return null; // 404 → DOI not registered → excluded
+    if (!res.ok) {
+      log.info("crossref.verify", { doi, ok: false, status: res.status });
+      return null; // 404 → DOI not registered → excluded
+    }
     const msg = ((await res.json()) as { message?: CrossrefWork }).message;
     if (!msg) return null;
+    log.info("crossref.verify", { doi, ok: true });
     return {
       doi,
       title: (msg.title?.[0] ?? "").trim(),

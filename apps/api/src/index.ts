@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { generateReply, runUpkeep } from "./lib/agent";
+import { streamSSE } from "hono/streaming";
+import { generateReply, runUpkeep, streamReply, type StreamEvent } from "./lib/agent";
 import { buildCtx } from "./lib/context";
-import { createResearchTask, getChatHistory, getResearchTask, setChatName } from "./lib/db";
+import { createResearchTask, getMessagesPage, getResearchTask, setChatName } from "./lib/db";
 import { runResearch } from "./lib/research";
 import { maskPhone } from "./lib/format";
 import { logger } from "./lib/logger";
+import { flushLogs, flushLogsAsync } from "./lib/logsink";
 import { isTrelloConfigured, Trello, type DueCard } from "./lib/trello";
 import { buildUsage, buildKeyDetail } from "./lib/usage";
 import { sendWhatsAppMessage } from "./lib/whatsapp";
@@ -23,6 +25,20 @@ app.use(
     allowMethods: ["GET", "POST", "DELETE", "OPTIONS"],
   }),
 );
+
+// Log EVERY request (method, path, query, status, duration) → forwarded to apps/logs via tail.
+app.use("*", async (c, next) => {
+  const start = Date.now();
+  const path = new URL(c.req.url).pathname;
+  const qs = c.req.url.includes("?") ? c.req.url.slice(c.req.url.indexOf("?")) : "";
+  log.info("req.start", { method: c.req.method, path, qs });
+  try {
+    await next();
+  } finally {
+    log.info("req.done", { method: c.req.method, path, status: c.res.status, ms: Date.now() - start });
+    flushLogs(c.env, c.executionCtx); // ship this request's logs to apps/logs
+  }
+});
 
 app.get("/", (c) => c.json({ ok: true, service: "linda-api" }));
 
@@ -75,6 +91,8 @@ app.post("/webhook/whatsapp", async (c) => {
           await runUpkeep(ctx, incoming.phone, result.userMessage, result.assistantMessage, result.historyLen);
         } catch (err) {
           log.error("message.processing.failed", { phone: masked, err: err instanceof Error ? err : String(err) });
+        } finally {
+          await flushLogsAsync(c.env); // ship background-processing logs
         }
       })(),
     );
@@ -100,9 +118,11 @@ app.post("/chat", requireSecret, async (c) => {
 
   const ctx = buildCtx(c.env);
   const result = await generateReply(ctx, phone, message);
-  // Memory upkeep runs after we return the reply.
+  // Memory upkeep runs after we return the reply; flush its logs when done.
   c.executionCtx.waitUntil(
-    runUpkeep(ctx, phone, result.userMessage, result.assistantMessage, result.historyLen),
+    runUpkeep(ctx, phone, result.userMessage, result.assistantMessage, result.historyLen).finally(() =>
+      flushLogsAsync(c.env),
+    ),
   );
 
   return c.json({
@@ -117,8 +137,53 @@ app.get("/history", requireSecret, async (c) => {
   const phone = c.env.OWNER_PHONE;
   if (!phone) return c.json({ error: "OWNER_PHONE not configured" }, 500);
   const ctx = buildCtx(c.env);
-  const history = await getChatHistory(ctx.db, phone, 50);
-  return c.json({ messages: history });
+  const before = Number(c.req.query("before")) || undefined;
+  const limit = Math.min(Number(c.req.query("limit")) || 30, 100);
+  const messages = await getMessagesPage(ctx.db, phone, { before, limit });
+  // Oldest id in this page → cursor for loading older messages (null when no more).
+  const nextBefore = messages.length === limit ? messages[0].id : null;
+  return c.json({ messages, nextBefore });
+});
+
+// Streaming chat (SSE) — text deltas + web-search progress events for the web UI.
+app.post("/chat/stream", requireSecret, (c) => {
+  const phone = c.env.OWNER_PHONE;
+  return streamSSE(c, async (stream) => {
+    if (!phone) {
+      await stream.writeSSE({ event: "error", data: JSON.stringify({ message: "OWNER_PHONE not configured" }) });
+      return;
+    }
+    let message = "";
+    try {
+      const body = (await c.req.json()) as { message?: string };
+      message = (body.message ?? "").trim();
+    } catch {
+      /* ignore */
+    }
+    if (!message) {
+      await stream.writeSSE({ event: "error", data: JSON.stringify({ message: "Empty message" }) });
+      return;
+    }
+
+    const ctx = buildCtx(c.env);
+    try {
+      const result = await streamReply(ctx, phone, message, async (ev: StreamEvent) => {
+        await stream.writeSSE({ event: ev.type, data: JSON.stringify(ev) });
+      });
+      await stream.writeSSE({
+        event: "done",
+        data: JSON.stringify({ reply: result.reply, keyUsed: result.keyUsed, model: result.modelUsed, timestamp: result.assistantMessage.timestamp }),
+      });
+      c.executionCtx.waitUntil(
+        runUpkeep(ctx, phone, result.userMessage, result.assistantMessage, result.historyLen).finally(() => flushLogsAsync(c.env)),
+      );
+    } catch (err) {
+      log.error("chat.stream.failed", { err: err instanceof Error ? err : String(err) });
+      await stream.writeSSE({ event: "error", data: JSON.stringify({ message: "Maaf, sedang ada gangguan. Coba lagi sebentar lagi ya." }) });
+    } finally {
+      flushLogs(c.env, c.executionCtx);
+    }
+  });
 });
 
 // ── Usage ─────────────────────────────────────────────────────────────────────
@@ -167,7 +232,7 @@ app.post("/research", requireSecret, async (c) => {
   if (!ctx.tavily.configured) log.warn("research.no-tavily");
   const id = crypto.randomUUID();
   await createResearchTask(ctx.db, id, topic);
-  c.executionCtx.waitUntil(runResearch(ctx, id, topic));
+  c.executionCtx.waitUntil(runResearch(ctx, id, topic).finally(() => flushLogsAsync(c.env)));
   log.info("research.start", { id, topic: topic.slice(0, 60) });
   return c.json({ id, status: "pending" });
 });
@@ -289,6 +354,6 @@ interface WhatsAppWebhookPayload {
 export default {
   fetch: app.fetch,
   scheduled: async (_event: ScheduledController, env: Env, ctx: ExecutionContext) => {
-    ctx.waitUntil(runTrelloReminder(env));
+    ctx.waitUntil(runTrelloReminder(env).finally(() => flushLogsAsync(env)));
   },
 };

@@ -45,9 +45,68 @@ export async function sendChat(message: string): Promise<{ reply: string; keyUse
   return req("/chat", { method: "POST", body: JSON.stringify({ message }) });
 }
 
-export async function fetchHistory(): Promise<Message[]> {
-  const data = await req<{ messages: Message[] }>("/history");
-  return data.messages;
+export async function fetchHistory(
+  before?: number,
+  limit = 30,
+): Promise<{ messages: Message[]; nextBefore: number | null }> {
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (before) qs.set("before", String(before));
+  return req<{ messages: Message[]; nextBefore: number | null }>(`/history?${qs.toString()}`);
+}
+
+export interface StreamHandlers {
+  onSearch?: (query: string) => void;
+  onSources?: (count: number, sources: { title: string; url: string }[]) => void;
+  onDelta?: (text: string) => void;
+  onDone?: (data: { reply: string; keyUsed: string; model: string; timestamp: number }) => void;
+  onError?: (message: string) => void;
+}
+
+/** POST /chat/stream and dispatch SSE events (search → sources → deltas → done). */
+export async function streamChat(message: string, h: StreamHandlers): Promise<void> {
+  const res = await fetch(`${API_BASE}/chat/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-linda-secret": getSecret() },
+    body: JSON.stringify({ message }),
+  });
+  if (res.status === 401) throw new UnauthorizedError();
+  if (!res.ok || !res.body) throw new Error(`Stream failed (${res.status})`);
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const block = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      dispatchSSE(block, h);
+    }
+  }
+}
+
+function dispatchSSE(block: string, h: StreamHandlers): void {
+  let event = "message";
+  let data = "";
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  if (!data) return;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (event === "search") h.onSearch?.(String(parsed.query ?? ""));
+  else if (event === "sources") h.onSources?.(Number(parsed.count ?? 0), (parsed.sources as { title: string; url: string }[]) ?? []);
+  else if (event === "delta") h.onDelta?.(String(parsed.text ?? ""));
+  else if (event === "done") h.onDone?.(parsed as unknown as { reply: string; keyUsed: string; model: string; timestamp: number });
+  else if (event === "error") h.onError?.(String(parsed.message ?? "error"));
 }
 
 export async function fetchUsage(): Promise<UsageResponse> {

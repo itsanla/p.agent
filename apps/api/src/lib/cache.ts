@@ -1,6 +1,9 @@
 import { Redis } from "@upstash/redis/cloudflare";
+import { logger } from "./logger";
 import type { Message } from "./types";
 import type { KeyState } from "./types";
+
+const log = logger("cache");
 
 // Upstash Redis is a CACHE only — D1 is the source of truth. Everything here is
 // safe to lose: dedup markers, reminder markers, a hot copy of recent history,
@@ -32,6 +35,7 @@ export class Cache {
     if (!this.redis) return true;
     try {
       const res = await this.redis.set(`processed:msg:${id}`, "1", { nx: true, ex: DEDUP_TTL });
+      log.info("claimMessage", { id, claimed: res === "OK" });
       return res === "OK";
     } catch (err) {
       console.error("[cache] claimMessage failed:", err);
@@ -55,7 +59,9 @@ export class Cache {
   async getHistory(phone: string): Promise<Message[] | null> {
     if (!this.redis) return null;
     try {
-      return await this.redis.get<Message[]>(`chat:hist:${phone}`);
+      const hit = await this.redis.get<Message[]>(`chat:hist:${phone}`);
+      log.info("getHistory", { hit: hit != null, rows: hit?.length ?? 0 });
+      return hit;
     } catch {
       return null;
     }

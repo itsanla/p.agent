@@ -36,8 +36,10 @@ export async function runResearch(ctx: Ctx, taskId: string, topic: string): Prom
   const writeModel = env.GROQ_WRITE_MODEL || "openai/gpt-oss-120b";
   const mailto = env.SCHOLAR_MAILTO || "linda@example.com";
 
-  const setStage = (stage: string, status: "running" | "done" | "error" = "running") =>
-    updateResearchTask(ctx.db, taskId, { status, stage });
+  const setStage = (stage: string, status: "running" | "done" | "error" = "running") => {
+    log.info("stage", { taskId, stage });
+    return updateResearchTask(ctx.db, taskId, { status, stage });
+  };
 
   try {
     await setStage("Merencanakan riset…");
@@ -53,12 +55,14 @@ export async function runResearch(ctx: Ctx, taskId: string, topic: string): Prom
       if (candidates.size >= MAX_CANDIDATES) break;
     }
     const ranked = [...candidates.values()].sort((a, b) => b.citedBy - a.citedBy).slice(0, MAX_REFS + 4);
+    log.info("discover", { taskId, candidates: candidates.size, ranked: ranked.length });
 
     // ── Verify each DOI on Crossref (authoritative IEEE metadata) ──
     await setStage("Memverifikasi DOI (Crossref)…");
     const verified = (
       await mapLimit(ranked, 5, (c) => crossrefVerify(c.doi, mailto))
     ).filter((r): r is VerifiedRef => r !== null).slice(0, MAX_REFS);
+    log.info("verify", { taskId, verifiedDoi: verified.length });
 
     if (verified.length === 0) {
       await updateResearchTask(ctx.db, taskId, {

@@ -2,12 +2,27 @@
 
 export type Role = "user" | "assistant";
 
+export interface SearchSource {
+  title: string;
+  url: string;
+}
+
+export interface SearchInfo {
+  query: string;
+  count: number;
+  sources: SearchSource[];
+  status: "searching" | "done";
+}
+
 export interface Message {
+  id?: number;
   role: Role;
   content: string;
   timestamp: number;
   keyUsed?: string;
   modelUsed?: string;
+  /** Web-search activity attached to an assistant message (Claude/Grok-style). */
+  search?: SearchInfo;
 }
 
 export interface ModelUsage {
