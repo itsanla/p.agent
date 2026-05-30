@@ -39,33 +39,41 @@ export function SecretGate({ children }: { children: ReactNode }) {
   }
 
   if (!ready) {
-    return <div className="grid min-h-screen place-items-center text-muted">Memuat…</div>;
+    return <div className="grid min-h-screen place-items-center text-muted">Memuat...</div>;
   }
 
   if (!authed) {
     return (
-      <div className="grid min-h-screen place-items-center px-4">
-        <form onSubmit={submit} className="w-full max-w-sm rounded-xl border border-border bg-surface p-6">
-          <div className="mb-1 flex items-center gap-2 text-lg font-semibold">
-            <span>⚡</span> Linda
+      <div className="grid min-h-screen place-items-center px-6">
+        <form onSubmit={submit} className="surface-card w-full max-w-md p-7">
+          <div className="mb-4 flex items-center justify-between">
+            <span className="badge">Secure Access</span>
+            <div className="chip accent">Private</div>
           </div>
-          <p className="mb-4 text-sm text-muted">Masukkan secret untuk mengakses Linda.</p>
+          <h1 className="title-display mb-2">Linda Studio</h1>
+          <p className="mb-6 text-sm text-muted">
+            Masukkan secret untuk membuka konsol pribadi Linda. Setiap sesi akan terenkripsi di
+            browser kamu.
+          </p>
+
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+            Secret
+          </label>
           <input
             type="password"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="WEB_AUTH_SECRET"
             autoFocus
-            className="mb-3 w-full rounded-lg border border-border bg-surface-2 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+            className="input-field mb-3 w-full"
           />
-          {error && <p className="mb-3 text-xs text-red-400">{error}</p>}
-          <button
-            type="submit"
-            disabled={checking || !input.trim()}
-            className="w-full rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
-          >
-            {checking ? "Memeriksa…" : "Masuk"}
+          {error && <p className="alert mb-4">{error}</p>}
+          <button type="submit" disabled={checking || !input.trim()} className="btn-primary w-full">
+            {checking ? "Memeriksa..." : "Masuk"}
           </button>
+          <p className="mt-4 text-xs text-muted">
+            Tips: simpan secret di password manager untuk login cepat.
+          </p>
         </form>
       </div>
     );

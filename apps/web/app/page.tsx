@@ -128,51 +128,84 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="mx-auto flex h-[100dvh] max-w-3xl flex-col px-4 py-4 sm:px-6">
-      <header className="mb-3 shrink-0">
-        <h1 className="text-xl font-semibold tracking-tight">Chat dengan Linda</h1>
-        <p className="text-sm text-muted">Percakapan ini berbagi memori dengan WhatsApp-mu.</p>
+    <div className="page-shell">
+      <header className="page-hero reveal">
+        <div className="eyebrow">Live Console</div>
+        <div className="hero-grid">
+          <div>
+            <h1 className="title-display">Linda Chat Studio</h1>
+            <p className="mt-3 text-sm text-muted">
+              Percakapan ini berbagi memori dengan WhatsApp-mu. Semua respons disimpan lokal
+              sementara, lalu disinkron ke database saat koneksi stabil.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="chip accent">Memori sinkron</span>
+              <span className="chip">Auto save lokal</span>
+              <span className="chip">Scroll ke atas untuk riwayat</span>
+            </div>
+          </div>
+          <div className="hero-card">
+            <div className="text-xs uppercase tracking-[0.2em] text-muted">Session</div>
+            <div className="mt-2 text-lg font-semibold">Linda x Kamu</div>
+            <p className="mt-2 text-xs text-muted">
+              Streaming respons real-time dengan indikator sumber web saat dibutuhkan.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="chip">Groq + Tavily</span>
+              <span className="chip accent">Realtime streaming</span>
+            </div>
+          </div>
+        </div>
       </header>
 
-      <div ref={scrollRef} onScroll={onScroll} className="flex-1 space-y-3 overflow-y-auto rounded-xl border border-border bg-surface p-4">
-        {loadingOlder && <p className="text-center text-xs text-muted">Memuat pesan lama…</p>}
-        {messages.length === 0 && <p className="text-sm text-muted">Belum ada percakapan. Sapa Linda untuk memulai 👋</p>}
-
-        {messages.map((m, i) => (
-          <div key={m.id ?? `t${m.timestamp}-${i}`}>
-            {m.role === "assistant" && m.search && (
-              <div className="ml-auto flex max-w-[80%] justify-end">
-                <div className="w-full">
-                  <SearchCard info={m.search} />
-                </div>
-              </div>
-            )}
-            {(m.content || m.role === "user") && <ChatBubble message={m} />}
-            {m.role === "assistant" && !m.content && !m.search && sending && i === messages.length - 1 && (
-              <div className="flex justify-end">
-                <div className="rounded-2xl rounded-br-sm bg-emerald-600/60 px-4 py-2 text-sm text-white">Linda mengetik…</div>
-              </div>
-            )}
+      <section className="surface-card chat-panel reveal delay-1">
+        <div className="chat-toolbar">
+          <div>
+            <div className="text-xs uppercase tracking-[0.2em] text-muted">Percakapan</div>
+            <div className="text-sm font-semibold">Mode interaktif</div>
           </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+          <button type="button" onClick={scrollToBottom} className="btn-secondary">
+            Ke bawah
+          </button>
+        </div>
+        <div ref={scrollRef} onScroll={onScroll} className="chat-feed">
+          {loadingOlder && <p className="text-center text-xs text-muted">Memuat pesan lama...</p>}
+          {messages.length === 0 && (
+            <p className="text-sm text-muted">Belum ada percakapan. Sapa Linda untuk memulai.</p>
+          )}
 
-      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          {messages.map((m, i) => (
+            <div key={m.id ?? `t${m.timestamp}-${i}`} className="space-y-3">
+              {m.role === "assistant" && m.search && (
+                <div className="flex justify-start">
+                  <div className="max-w-[85%]">
+                    <SearchCard info={m.search} />
+                  </div>
+                </div>
+              )}
+              {(m.content || m.role === "user") && <ChatBubble message={m} />}
+              {m.role === "assistant" && !m.content && !m.search && sending && i === messages.length - 1 && (
+                <div className="flex justify-start">
+                  <div className="typing-indicator">Linda sedang mengetik</div>
+                </div>
+              )}
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+      </section>
 
-      <form onSubmit={send} className="mt-3 flex shrink-0 gap-2">
+      {error && <p className="alert">{error}</p>}
+
+      <form onSubmit={send} className="chat-input-bar reveal delay-2">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Tulis pesan…"
+          placeholder="Tulis pesan ke Linda..."
           disabled={sending}
-          className="flex-1 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm outline-none focus:border-emerald-500 disabled:opacity-50"
+          className="input-field flex-1"
         />
-        <button
-          type="submit"
-          disabled={sending || !input.trim()}
-          className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
-        >
+        <button type="submit" disabled={sending || !input.trim()} className="btn-primary">
           Kirim
         </button>
       </form>

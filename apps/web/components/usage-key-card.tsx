@@ -9,8 +9,8 @@ function pct(used: number, limit: number): number {
   return limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
 }
 
-function barColor(p: number): string {
-  return p >= 90 ? "bg-red-500" : p >= 70 ? "bg-amber-400" : "bg-emerald-500";
+function barTone(p: number): string {
+  return p >= 90 ? "progress-fill danger" : p >= 70 ? "progress-fill warn" : "progress-fill ok";
 }
 
 export function UsageKeyCard({ k }: { k: KeyUsage }) {
@@ -20,7 +20,7 @@ export function UsageKeyCard({ k }: { k: KeyUsage }) {
 
   const used = pct(k.totalTokens, k.combinedTokenLimit);
   const status = k.restricted ? "Restricted" : k.isLimited ? "Rate limited" : "Active";
-  const dot = k.restricted ? "bg-zinc-500" : k.isLimited ? "bg-red-500" : "bg-emerald-500";
+  const dot = k.restricted ? "bg-surface-3" : k.isLimited ? "bg-accent-2" : "bg-accent";
 
   async function toggle() {
     const next = !open;
@@ -36,26 +36,26 @@ export function UsageKeyCard({ k }: { k: KeyUsage }) {
   }
 
   return (
-    <div className={`rounded-xl border border-border bg-surface ${k.restricted ? "opacity-60" : ""}`}>
-      <div className="flex items-center justify-between border-b border-border px-5 py-3">
+    <div className={`surface-card ${k.restricted ? "opacity-70" : ""}`}>
+      <div className="flex items-center justify-between border-b border-border bg-surface-2 px-5 py-4">
         <div className="flex items-center gap-2">
-          <span className="font-medium">API Key #{k.index}</span>
+          <span className="chip accent">Key #{k.index}</span>
           <span className={`h-2 w-2 rounded-full ${dot}`} />
-          <span className="text-sm text-muted">{status}</span>
+          <span className="text-xs uppercase tracking-[0.18em] text-muted">{status}</span>
         </div>
         <span className="font-mono text-xs text-muted">{k.maskedKey}</span>
       </div>
 
-      <div className="space-y-2 px-5 py-4">
-        <div className="flex items-center justify-between text-xs uppercase tracking-wide text-muted">
-          <span>Token hari ini (semua model)</span>
+      <div className="space-y-3 px-5 py-4">
+        <div className="flex items-center justify-between text-xs uppercase tracking-[0.2em] text-muted">
+          <span>Token hari ini</span>
           <span className="normal-case">{timeAgo(k.lastUsed)}</span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-surface-2">
-          <div className={`h-full rounded-full transition-all ${barColor(used)}`} style={{ width: `${used}%` }} />
+        <div className="progress-track">
+          <div className={`${barTone(used)}`} style={{ width: `${used}%` }} />
         </div>
         <div className="flex justify-between text-xs">
-          <span className={used >= 90 ? "text-red-400" : "text-muted"}>
+          <span className={used >= 90 ? "text-accent-2" : "text-muted"}>
             {formatNumber(k.totalTokens)} / {formatNumber(k.combinedTokenLimit)}
           </span>
           <span className="text-muted">{formatNumber(k.totalRequests)} request</span>
@@ -64,14 +64,14 @@ export function UsageKeyCard({ k }: { k: KeyUsage }) {
         <button
           onClick={() => void toggle()}
           disabled={k.restricted}
-          className="mt-1 text-xs text-emerald-400 hover:underline disabled:text-muted disabled:no-underline"
+          className="text-xs font-semibold text-accent-3 hover:underline disabled:text-muted disabled:no-underline"
         >
-          {open ? "▲ Sembunyikan detail" : "▼ Detail per model"}
+          {open ? "Hide detail" : "Detail per model"}
         </button>
 
         {open && (
-          <div className="mt-2 space-y-2 border-t border-border pt-3">
-            {loading && <p className="text-xs text-muted">Memuat…</p>}
+          <div className="mt-2 space-y-3 border-t border-border pt-3">
+            {loading && <p className="text-xs text-muted">Memuat...</p>}
             {models?.map((m) => {
               const mp = pct(m.totalTokens, m.tokenLimit);
               return (
@@ -82,8 +82,8 @@ export function UsageKeyCard({ k }: { k: KeyUsage }) {
                       {formatNumber(m.totalTokens)} / {formatNumber(m.tokenLimit)}
                     </span>
                   </div>
-                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-                    <div className={`h-full rounded-full ${barColor(mp)}`} style={{ width: `${mp}%` }} />
+                  <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-surface-3">
+                    <div className={`${barTone(mp)}`} style={{ width: `${mp}%` }} />
                   </div>
                 </div>
               );

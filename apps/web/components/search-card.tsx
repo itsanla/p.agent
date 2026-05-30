@@ -17,29 +17,31 @@ export function SearchCard({ info }: { info: SearchInfo }) {
   const searching = info.status === "searching";
 
   return (
-    <div className="mb-2 rounded-lg border border-border bg-surface-2/60 text-xs">
+    <div className="search-card">
       <button
         onClick={() => setOpen((v) => !v)}
         disabled={searching || info.count === 0}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-muted disabled:cursor-default"
+        className="search-toggle disabled:cursor-default"
       >
-        {searching ? (
-          <>
-            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" />
-            <span>Mencari web…</span>
-          </>
-        ) : (
-          <>
-            <span>🌐</span>
-            <span className="text-foreground/80">Menelusuri {info.count} situs</span>
-          </>
-        )}
-        {info.query && <span className="truncate italic opacity-70">“{info.query}”</span>}
-        {!searching && info.count > 0 && <span className="ml-auto">{open ? "▲" : "▼"}</span>}
+        <div className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-surface-2">
+          {searching ? (
+            <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+          ) : (
+            <span className="text-[10px] font-semibold text-accent">WEB</span>
+          )}
+        </div>
+        <div className="flex-1">
+          <div className="text-[10px] uppercase tracking-[0.2em] text-muted">Web scan</div>
+          <div className="text-sm font-semibold">
+            {searching ? "Mencari sumber..." : `Menemukan ${info.count} sumber`}
+          </div>
+          {info.query && <div className="truncate text-xs text-muted">Query: "{info.query}"</div>}
+        </div>
+        {!searching && info.count > 0 && <span className="text-xs text-muted">{open ? "Hide" : "Show"}</span>}
       </button>
 
       {open && info.sources.length > 0 && (
-        <ul className="space-y-1 border-t border-border px-3 py-2">
+        <ul className="search-list">
           {info.sources.map((s, i) => (
             <li key={i} className="flex gap-2">
               <span className="text-muted">{i + 1}.</span>
@@ -47,11 +49,11 @@ export function SearchCard({ info }: { info: SearchInfo }) {
                 href={s.url}
                 target="_blank"
                 rel="noreferrer"
-                className="truncate text-emerald-400 hover:underline"
+                className="search-link"
                 title={s.title}
               >
-                {s.title || domain(s.url)}
-                <span className="ml-1 text-muted">· {domain(s.url)}</span>
+                <span className="truncate">{s.title || domain(s.url)}</span>
+                <span className="text-muted">· {domain(s.url)}</span>
               </a>
             </li>
           ))}

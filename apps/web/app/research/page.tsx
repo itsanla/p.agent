@@ -51,46 +51,60 @@ export default function ResearchPage() {
   const m = task?.status === "done" ? task.manuscript : null;
 
   return (
-    <div className="mx-auto max-w-3xl px-5 py-8 sm:px-8">
-      <header className="mb-5">
-        <h1 className="text-2xl font-semibold tracking-tight">Deep Research</h1>
-        <p className="text-sm text-muted">
-          Mode jurnal: Linda menyusun manuscript IEEE lengkap. Daftar pustaka hanya paper ber-DOI
-          (OpenAlex + Crossref); konteks web dipakai untuk penalaran saja.
-        </p>
+    <div className="page-shell">
+      <header className="page-hero reveal">
+        <div className="eyebrow">Deep Research</div>
+        <div className="hero-grid">
+          <div>
+            <h1 className="title-display">Manuscript Lab</h1>
+            <p className="mt-3 text-sm text-muted">
+              Mode jurnal: Linda menyusun manuscript IEEE lengkap. Daftar pustaka hanya paper
+              ber-DOI (OpenAlex + Crossref). Konteks web dipakai untuk penalaran saja.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <span className="chip accent">IEEE-ready</span>
+              <span className="chip">Auto citation</span>
+              <span className="chip">Ekspor DOC/PDF</span>
+            </div>
+          </div>
+          <div className="hero-card">
+            <div className="text-xs uppercase tracking-[0.2em] text-muted">Output</div>
+            <div className="mt-2 text-lg font-semibold">Manuscript lengkap</div>
+            <p className="mt-2 text-xs text-muted">
+              Linda menyusun abstrak, metodologi, diskusi, dan referensi terformat otomatis.
+            </p>
+          </div>
+        </div>
       </header>
 
-      <form onSubmit={submit} className="mb-6 flex gap-2">
-        <input
-          value={topic}
-          onChange={(e) => setTopic(e.target.value)}
-          placeholder="Topik / pertanyaan riset…"
-          disabled={busy}
-          className="flex-1 rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm outline-none focus:border-emerald-500 disabled:opacity-50"
-        />
-        <button
-          type="submit"
-          disabled={busy || !topic.trim()}
-          className="rounded-lg bg-emerald-600 px-5 py-2 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-        >
-          {busy ? "Meneliti…" : "Mulai"}
-        </button>
+      <form onSubmit={submit} className="surface-card p-5 reveal delay-1">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center">
+          <input
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            placeholder="Topik atau pertanyaan riset..."
+            disabled={busy}
+            className="input-field flex-1"
+          />
+          <button type="submit" disabled={busy || !topic.trim()} className="btn-primary">
+            {busy ? "Meneliti..." : "Mulai"}
+          </button>
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          Proses riset berjalan beberapa menit. Biarkan tab ini tetap terbuka.
+        </p>
       </form>
 
-      {error && <p className="mb-4 text-sm text-red-400">{error}</p>}
+      {error && <p className="alert">{error}</p>}
 
       {task && task.status !== "done" && task.status !== "error" && (
-        <div className="rounded-xl border border-border bg-surface px-5 py-6 text-center">
-          <div className="mb-2 animate-pulse text-emerald-400">● {task.stage}</div>
-          <p className="text-xs text-muted">Riset berjalan beberapa menit — biarkan tab ini terbuka.</p>
+        <div className="surface-card soft p-6 text-center">
+          <div className="chip accent">Stage: {task.stage}</div>
+          <p className="mt-3 text-xs text-muted">Riset berjalan beberapa menit. Mohon tunggu.</p>
         </div>
       )}
 
-      {task?.status === "error" && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-400">
-          {task.error || "Riset gagal."}
-        </div>
-      )}
+      {task?.status === "error" && <p className="alert">{task.error || "Riset gagal."}</p>}
 
       {m && <ManuscriptView m={m} />}
     </div>
@@ -99,23 +113,17 @@ export default function ResearchPage() {
 
 function ManuscriptView({ m }: { m: Manuscript }) {
   return (
-    <article className="rounded-xl border border-border bg-surface px-6 py-6">
+    <article className="manuscript-card reveal delay-2">
       <div className="mb-4 flex flex-wrap gap-2">
-        <button
-          onClick={() => exportDoc(m)}
-          className="rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm hover:bg-surface"
-        >
-          ⬇ Download Word (.doc)
+        <button onClick={() => exportDoc(m)} className="btn-secondary">
+          Download Word (.doc)
         </button>
-        <button
-          onClick={() => exportPdf(m)}
-          className="rounded-lg border border-border bg-surface-2 px-4 py-2 text-sm hover:bg-surface"
-        >
-          🖨 PDF (Save as PDF)
+        <button onClick={() => exportPdf(m)} className="btn-secondary">
+          PDF (Save as PDF)
         </button>
       </div>
 
-      <h2 className="mb-3 text-center text-xl font-semibold">{m.title}</h2>
+      <h2 className="mb-3 text-xl font-semibold">{m.title}</h2>
       <p className="mb-3 text-sm leading-relaxed">
         <span className="font-semibold italic">Abstract—</span>
         <span className="italic">{m.abstract}</span>
@@ -128,7 +136,7 @@ function ManuscriptView({ m }: { m: Manuscript }) {
 
       {m.sections.map((s, i) => (
         <section key={i} className="mb-4">
-          <h3 className="mb-1 font-semibold">{s.heading}</h3>
+          <h3 className="mb-2 font-semibold">{s.heading}</h3>
           {s.body.split(/\n{2,}/).map((p, j) => (
             <p key={j} className="mb-2 text-sm leading-relaxed text-foreground/90">
               {p.trim()}
@@ -148,9 +156,9 @@ function ManuscriptView({ m }: { m: Manuscript }) {
                 href={`https://doi.org/${r.doi}`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-emerald-400 hover:underline"
+                className="text-accent-3 hover:underline"
               >
-                ↗
+                link
               </a>
             </span>
           </li>

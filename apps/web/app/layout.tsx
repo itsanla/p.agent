@@ -1,7 +1,20 @@
 import type { Metadata } from "next";
+import { Karla, Syne } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
 import { SecretGate } from "@/components/secret-gate";
+
+const display = Syne({
+  subsets: ["latin"],
+  weight: ["500", "600", "700", "800"],
+  variable: "--font-display",
+});
+
+const body = Karla({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-body",
+});
 
 export const metadata: Metadata = {
   title: "Linda — Personal AI Agent",
@@ -10,12 +23,13 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="id" className="h-full antialiased">
-      <body className="min-h-full">
+    <html lang="id" className={`${display.variable} ${body.variable} h-full antialiased`}>
+      <body className="min-h-full bg-background text-foreground">
+        <div className="app-ambient" aria-hidden="true" />
         <SecretGate>
-          <div className="flex min-h-screen flex-col md:flex-row">
+          <div className="app-shell">
             <Sidebar />
-            <main className="flex-1 overflow-x-hidden">{children}</main>
+            <main className="app-main">{children}</main>
           </div>
         </SecretGate>
       </body>
