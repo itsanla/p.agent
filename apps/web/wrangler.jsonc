@@ -1,0 +1,9 @@
+{
+  "name": "agent-web",
+  "compatibility_date": "2026-05-29",
+  "assets": {
+    "directory": "./out",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  }
+}
