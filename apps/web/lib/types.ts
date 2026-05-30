@@ -1,4 +1,4 @@
-// Shared domain types used across the app.
+// View types shared by the chat + usage pages (mirror the Worker's responses).
 
 export type Role = "user" | "assistant";
 
@@ -6,77 +6,70 @@ export interface Message {
   role: Role;
   content: string;
   timestamp: number;
-  /** Groq API key index that produced this message (assistant only). */
   keyUsed?: string;
+  modelUsed?: string;
 }
 
-export interface ChatMetadata {
-  phone: string;
-  name: string | null;
-  lastActive: number;
-  totalMessages: number;
-  lastMessage: string;
+export interface ModelUsage {
+  model: string;
+  totalTokens: number;
+  totalRequests: number;
+  tokenLimit: number;
+  requestLimit: number;
 }
 
-/** Live + persisted state for a single Groq API key. */
-export interface KeyState {
+export interface KeyUsage {
   index: number;
   maskedKey: string;
-  limitRequests: number | null;
-  limitTokens: number | null;
-  remainingRequests: number | null;
-  remainingTokens: number | null;
-  resetRequestsAt: number | null; // epoch ms
-  resetTokensAt: number | null; // epoch ms
-  isLimited: boolean;
-  limitedUntil: number | null; // epoch ms
-  totalTokensUsed: number;
-  totalRequestsMade: number;
-  lastUsed: number | null; // epoch ms
-  // Authoritative daily-token figures parsed from a Groq 429 (TPD) error.
-  reportedTokensUsed: number | null;
-  reportedTokenLimit: number | null;
-}
-
-/** Shape returned by GET /api/stats for a single key. */
-export interface KeyStatsResponse {
-  index: number;
-  maskedKey: string;
+  restricted: boolean;
   isLimited: boolean;
   limitedUntil: string | null;
-  remainingTokens: number | null;
-  limitTokens: number | null;
-  remainingRequests: number | null;
-  limitRequests: number | null;
-  resetTokensIn: number | null; // ms from now
-  resetRequestsIn: number | null; // ms from now
-  totalTokensUsed: number;
-  totalRequestsMade: number;
+  totalTokens: number;
+  totalRequests: number;
+  combinedTokenLimit: number;
   lastUsed: string | null;
-  // Daily token usage shown on the gauge: Groq's reported figure when available
-  // (after a 429), otherwise our own running estimate.
-  dailyTokensUsed: number;
-  dailyTokenLimit: number;
-  /** True when dailyTokensUsed/Limit came straight from Groq (exact). */
-  dailyFromGroq: boolean;
 }
 
-export interface CombinedStatsResponse {
-  totalKeys: number;
-  activeKeys: number;
-  limitedKeys: number;
-  totalRemainingTokens: number;
-  totalLimitTokens: number;
-  totalRemainingRequests: number;
-  totalRequestsToday: number;
-  totalTokensToday: number;
-  totalDailyTokenLimit: number;
+// ── Deep research (IEEE journal manuscript) ───────────────────────────────────
+export interface Reference {
+  n: number;
+  ieee: string;
+  doi: string;
+}
+export interface Manuscript {
+  title: string;
+  abstract: string;
+  keywords: string[];
+  sections: { heading: string; body: string }[];
+  references: Reference[];
+}
+export interface ResearchTask {
+  id: string;
+  topic: string;
+  status: "pending" | "running" | "done" | "error";
+  stage: string;
+  error: string | null;
+  manuscript: Manuscript | null;
+  updatedAt: number;
 }
 
-export interface StatsResponse {
-  keys: KeyStatsResponse[];
-  combined: CombinedStatsResponse;
-  /** Daily tokens-per-day limit per key (the constraint that usually bites). */
-  tpdLimit: number;
+// ── Tavily credit usage ───────────────────────────────────────────────────────
+export interface TavilyUsage {
+  month: string;
+  keys: { index: number; creditsUsed: number; limit: number; exhausted: boolean }[];
+  combined: { totalKeys: number; creditsUsed: number; creditLimit: number };
+}
+
+export interface UsageResponse {
+  keys: KeyUsage[];
+  combined: {
+    totalKeys: number;
+    activeKeys: number;
+    restrictedKeys: number;
+    limitedKeys: number;
+    totalTokensToday: number;
+    totalRequestsToday: number;
+    combinedDailyTokenLimit: number;
+  };
   updatedAt: string;
 }
