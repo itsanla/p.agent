@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
 
 const NAV = [
   {
@@ -55,34 +54,13 @@ const NAV = [
 
 export function Sidebar() {
   const pathname = usePathname();
-  const [open, setOpen] = useState(false);
 
   const isActive = (href: string) => (href === "/" ? pathname === "/" : pathname.startsWith(href));
 
   return (
     <>
-      {/* Mobile top bar */}
-      <div className="mobile-bar md:hidden">
-        <div className="flex items-center gap-3">
-          <div className="brand-orb">L</div>
-          <div>
-            <div className="text-sm font-semibold tracking-tight">Linda Studio</div>
-            <div className="text-xs text-muted">Personal AI Agent</div>
-          </div>
-        </div>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="nav-toggle"
-          aria-label="Toggle navigation"
-        >
-          Menu
-        </button>
-      </div>
-
-      <aside
-        className={`${open ? "block" : "hidden"} sidebar shrink-0 md:block`}
-      >
-        <div className="hidden items-center gap-3 px-5 pt-6 md:flex">
+      <aside className="sidebar shrink-0">
+        <div className="flex items-center gap-3 px-5 pt-6">
           <div className="brand-orb">L</div>
           <div>
             <div className="text-base font-semibold tracking-tight">Linda Studio</div>
@@ -107,7 +85,6 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              onClick={() => setOpen(false)}
               className={`nav-item ${isActive(item.href) ? "active" : ""}`}
             >
               {item.icon}
@@ -116,7 +93,7 @@ export function Sidebar() {
           ))}
         </nav>
 
-        <div className="sidebar-footer hidden md:block">
+        <div className="sidebar-footer">
           <div className="mb-2">Asisten pribadi</div>
           <div className="text-xs">WhatsApp · Web · Trello</div>
         </div>

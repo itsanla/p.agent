@@ -119,13 +119,7 @@ a {
   z-index: 1;
   display: flex;
   min-height: 100dvh;
-  flex-direction: column;
-}
-
-@media (min-width: 768px) {
-  .app-shell {
-    flex-direction: row;
-  }
+  flex-direction: row;
 }
 
 .app-main {
@@ -298,19 +292,15 @@ a {
 }
 
 .sidebar {
-  width: 100%;
-  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100dvh;
+  width: 264px;
+  border-right: 1px solid var(--border);
   background: rgba(251, 246, 239, 0.9);
   backdrop-filter: blur(16px);
-}
-
-@media (min-width: 768px) {
-  .sidebar {
-    width: 264px;
-    border-right: 1px solid var(--border);
-    border-bottom: none;
-    min-height: 100dvh;
-  }
+  overflow-y: auto;
 }
 
 .mobile-bar {
